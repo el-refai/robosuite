@@ -298,7 +298,7 @@ class TwoArmTapeHandover(TwoArmEnv):
         else:
             if self.env_configuration == "opposed":
                 # Set up robots facing towards each other by rotating them from their default position
-                for robot, rotation, offset in zip(self.robots, (np.pi / 2, -np.pi / 2), (-0.25, 0.25)):
+                for robot, rotation, offset in zip(self.robots, (np.pi / 2, -np.pi / 2), (0.25, -0.25)):
                     xpos = robot.robot_model.base_xpos_offset["table"](self.table_full_size[0])
                     rot = np.array((0, 0, rotation))
                     xpos = T.euler2mat(rot) @ np.array(xpos)
@@ -307,7 +307,7 @@ class TwoArmTapeHandover(TwoArmEnv):
                     robot.robot_model.set_base_ori(rot)
             else:  # "parallel" configuration setting
                 # Set up robots parallel to each other but offset from the center
-                for robot, offset in zip(self.robots, (-0.6, 0.6)):
+                for robot, offset in zip(self.robots, (0.6, -0.6)):
                     xpos = robot.robot_model.base_xpos_offset["table"](self.table_full_size[0])
                     xpos = np.array(xpos) + np.array((0, offset, 0))
                     robot.robot_model.set_base_xpos(xpos)
