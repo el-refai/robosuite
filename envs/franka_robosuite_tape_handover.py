@@ -142,6 +142,7 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             self.viser_img_handle = None
             self.image_frustum_handle = None
             self.gripper_metric_length = 0.0584
+        self.reset()
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None

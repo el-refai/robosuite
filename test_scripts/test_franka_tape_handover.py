@@ -43,13 +43,13 @@ def main():
     print("Initializing high-level FrankaTapeHandoverCodeEnv...")
     exec_env = FrankaTapeHandoverCodeEnv(cfg)
 
-    # 4. Enable video recording
-    print("Enabling video capture...")
-    exec_env.enable_video_capture(True)
-
-    # 5. Reset the environment
+    # 4. Reset the environment
     print("Resetting environment...")
     obs, info = exec_env.reset()
+
+    # 5. Enable video recording
+    print("Enabling video capture...")
+    exec_env.enable_video_capture(True)
 
     # 6. Execute the oracle code
     print("\nExecuting oracle action via exec_env.step()...")
