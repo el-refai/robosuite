@@ -388,8 +388,8 @@ class TwoArmTapeHandover(TwoArmEnv):
             sampler=UniformRandomSampler(
                 name="YellowTapeSampler",
                 mujoco_objects=self.yellow_tape,
-                x_range=[-0.15, 0.0],
-                y_range=[y_right_center, y_right_center + 0.15],
+                x_range=[0.0, 0.0], #x_range=[-0.15, 0.0],
+                y_range=[y_right_center, y_right_center], #y_range=[y_right_center, y_right_center + 0.15],
                 rotation=0,
                 rotation_axis="z",
                 ensure_object_boundary_in_range=False,
@@ -405,8 +405,8 @@ class TwoArmTapeHandover(TwoArmEnv):
             sampler=UniformRandomSampler(
                 name="DuctTapeSampler",
                 mujoco_objects=self.duct_tape,
-                x_range=[0.0, 0.15],
-                y_range=[y_left_center - 0.15, y_left_center],
+                x_range=[0.0, 0.0], #x_range=[0.0, 0.15],
+                y_range=[y_left_center, y_left_center], #y_range=[y_left_center - 0.15, y_left_center],
                 rotation=0,
                 rotation_axis="z",
                 ensure_object_boundary_in_range=False,
