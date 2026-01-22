@@ -110,6 +110,10 @@ Examples:
     print("Initializing high-level CodeExecutionEnvBase...")
     exec_env = CodeExecutionEnvBase(cfg)
 
+    # 5. Reset the environment
+    print("Resetting environment...")
+    obs, info = exec_env.reset()
+
     # 4. Enable video recording and joint state collection
     # Convert fps to step frequency: simulation runs at ~500Hz, so steps_per_sample = 500 / fps
     SIMULATION_FPS = 500.0  # Simulation timestep is 0.002s = 500Hz
@@ -118,10 +122,6 @@ Examples:
     print(f"Enabling video capture and joint state collection (target: {args.joint_state_fps} fps, actual: {actual_fps:.2f} fps, every {joint_state_freq_steps} steps)...")
     exec_env.enable_video_capture(True)
     low_level_env.enable_joint_state_collection(True, clear=True, freq=joint_state_freq_steps)
-
-    # 5. Reset the environment
-    print("Resetting environment...")
-    obs, info = exec_env.reset()
 
     # --- Manually set object position (relative offset) ---
     sim = low_level_env.robosuite_env.sim
@@ -178,7 +178,6 @@ Examples:
     print(f"Total offset yellow tape: {total_offset_yellow_tape}")
     print(f"Total offset duct tape: {total_offset_duct_tape}")
     # ------------------------------------
-
     action_code = f"""import numpy as np
 import viser.transforms as vtf
 
@@ -191,25 +190,22 @@ duct_tape_pos += np.array([{total_offset_duct_tape[0]}, {total_offset_duct_tape[
 arm1_pos, _ = get_arm1_gripper_pose()
 arm0_pos, _ = get_arm0_gripper_pose()
 handover_pos = (arm1_pos + arm0_pos) / 2
+handover_pos[0] -= 0.15 # shift the handover position back by 15cm to make it more reachable
+handover_pos[1] += 0.1 # shift the handover position left by 10cm to make it more reachable
 arm0_handover_pos = handover_pos.copy()
 # Need a way to get the width of the yellow tape that isnt privileged
 # this is half the width of the franka gripper:
-arm0_handover_pos[2] += 0.1025
+arm0_handover_pos[1] -= 0.1025 # shift handover position right by half the width of the franka gripper
+arm0_handover_pos[0] += 0.02 # shift handover position forward by 2cm
 
 # --- Pickup orientation ---
 gripper_down_quat = np.array([0, 1, 0, 0])
-gripper_side_matrix = vtf.SO3(wxyz=[0.707, 0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+# old one: gripper_side_matrix = vtf.SO3(wxyz=[0.707, 0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+gripper_side_matrix = vtf.SO3(wxyz=[0.707, 0, -0.707, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
 gripper_side_quat = gripper_side_matrix.wxyz
-gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, -0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+# old one: gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, -0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, 0, 0.707, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
 gripper_rotated_side_quat = gripper_rotated_side_matrix.wxyz
-
-# # Arm0 pick up duct tape
-# open_gripper_arm0()
-# goto_pose_arm0((duct_tape_pos+np.array([-0.01, -0.05, 0.0])), gripper_down_quat, z_approach=0.15)
-# close_gripper_arm0()
-# lifted = duct_tape_pos.copy(); lifted[2] = 0.15
-# goto_pose_arm0(lifted, gripper_down_quat)
-# goto_home_joint_position_arm0()
 
 # Arm1: pick up yellow tape
 open_gripper_arm1()
@@ -227,27 +223,94 @@ goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
 # arm0_quat = np.array([0.707, 0.707, 0, 0])
 arm0_quat = gripper_side_quat
 open_gripper_arm0()
-# goto_pose_arm0(arm0_handover_pos + np.array([0.1, 0, 0.12]), arm0_quat, z_approach=0.1)
-# goto_pose_arm0(arm0_handover_pos, arm0_quat, z_approach=0.12)
-goto_pose_arm0(arm0_handover_pos + np.array([0, 0.02, 0]), arm0_quat, z_approach=0.10)
-goto_pose_arm0(arm0_handover_pos + np.array([0, 0.02, 0]), arm0_quat, z_approach=0.01)
+goto_pose_arm0(arm0_handover_pos, arm0_quat, z_approach=0.10)
 close_gripper_arm0()
 
 # Arm1: release and retract
 open_gripper_arm1()
 shifted_handover_pos = handover_pos + vtf.SO3(wxyz=gripper_rotated_side_quat).as_matrix() @ np.array([0, 0, -0.1])
 shifted_arm0_pos = arm0_handover_pos + vtf.SO3(wxyz=arm0_quat).as_matrix() @ np.array([0, 0, -0.1])
-goto_pose_arm1(shifted_handover_pos, gripper_rotated_side_quat)
 goto_pose_arm0(shifted_arm0_pos, arm0_quat)
+goto_pose_arm1(shifted_handover_pos, gripper_rotated_side_quat)
 goto_home_joint_position_arm1()
 goto_home_joint_position_arm0()
 
-# Arm0: drop yellow tape at duct tape position, shifted to the left because the tape is slightly off-center in the robot's grasp
-goto_pose_arm0((duct_tape_pos+np.array([-0.02, 0, 0.05])), gripper_down_quat, z_approach=0.15)
+# Arm0: drop cube in bowl, shifted to the left because the tape is slightly off-center in the robot's grasp
+goto_pose_arm0((duct_tape_pos+np.array([0.1, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
 open_gripper_arm0()
-goto_pose_arm0((duct_tape_pos+np.array([0, 0, 0.2])), gripper_down_quat)
+goto_pose_arm0((duct_tape_pos+np.array([0, -0.05, 0.2])), gripper_down_quat)
 goto_home_joint_position_arm0()
     """
+
+#     action_code = f"""import numpy as np
+# import viser.transforms as vtf
+
+# # --- Get poses ---
+# yellow_tape_pos, yellow_tape_quat = get_object_pose("yellow tape")
+# yellow_tape_pos += np.array([{total_offset_yellow_tape[0]}, {total_offset_yellow_tape[1]}, {total_offset_yellow_tape[2]}]) 
+# duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
+# duct_tape_pos += np.array([{total_offset_duct_tape[0]}, {total_offset_duct_tape[1]}, {total_offset_duct_tape[2]}]) 
+
+# arm1_pos, _ = get_arm1_gripper_pose()
+# arm0_pos, _ = get_arm0_gripper_pose()
+# handover_pos = (arm1_pos + arm0_pos) / 2
+# arm0_handover_pos = handover_pos.copy()
+# # Need a way to get the width of the yellow tape that isnt privileged
+# # this is half the width of the franka gripper:
+# arm0_handover_pos[2] += 0.1025
+
+# # --- Pickup orientation ---
+# gripper_down_quat = np.array([0, 1, 0, 0])
+# gripper_side_matrix = vtf.SO3(wxyz=[0.707, 0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+# gripper_side_quat = gripper_side_matrix.wxyz
+# gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, -0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+# gripper_rotated_side_quat = gripper_rotated_side_matrix.wxyz
+
+# # # Arm0 pick up duct tape
+# # open_gripper_arm0()
+# # goto_pose_arm0((duct_tape_pos+np.array([-0.01, -0.05, 0.0])), gripper_down_quat, z_approach=0.15)
+# # close_gripper_arm0()
+# # lifted = duct_tape_pos.copy(); lifted[2] = 0.15
+# # goto_pose_arm0(lifted, gripper_down_quat)
+# # goto_home_joint_position_arm0()
+
+# # Arm1: pick up yellow tape
+# open_gripper_arm1()
+# # shift the pick -y by 2cm to grab the tape on one end of the radius
+# goto_pose_arm1((yellow_tape_pos+np.array([-0.01, 0.05, -0.02])), gripper_down_quat, z_approach=0.15)
+# close_gripper_arm1()
+# lifted = yellow_tape_pos.copy(); lifted[2] = 0.15
+# goto_pose_arm1(lifted, gripper_down_quat)
+# goto_home_joint_position_arm1()
+
+# # Arm1: move to handover (shifted toward arm0)
+# goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
+
+# # Arm0 approach
+# # arm0_quat = np.array([0.707, 0.707, 0, 0])
+# arm0_quat = gripper_side_quat
+# open_gripper_arm0()
+# # goto_pose_arm0(arm0_handover_pos + np.array([0.1, 0, 0.12]), arm0_quat, z_approach=0.1)
+# # goto_pose_arm0(arm0_handover_pos, arm0_quat, z_approach=0.12)
+# goto_pose_arm0(arm0_handover_pos + np.array([0, 0.02, 0]), arm0_quat, z_approach=0.10)
+# goto_pose_arm0(arm0_handover_pos + np.array([0, 0.02, 0]), arm0_quat, z_approach=0.01)
+# close_gripper_arm0()
+
+# # Arm1: release and retract
+# open_gripper_arm1()
+# shifted_handover_pos = handover_pos + vtf.SO3(wxyz=gripper_rotated_side_quat).as_matrix() @ np.array([0, 0, -0.1])
+# shifted_arm0_pos = arm0_handover_pos + vtf.SO3(wxyz=arm0_quat).as_matrix() @ np.array([0, 0, -0.1])
+# goto_pose_arm1(shifted_handover_pos, gripper_rotated_side_quat)
+# goto_pose_arm0(shifted_arm0_pos, arm0_quat)
+# goto_home_joint_position_arm1()
+# goto_home_joint_position_arm0()
+
+# # Arm0: drop yellow tape at duct tape position, shifted to the left because the tape is slightly off-center in the robot's grasp
+# goto_pose_arm0((duct_tape_pos+np.array([-0.02, 0, 0.05])), gripper_down_quat, z_approach=0.15)
+# open_gripper_arm0()
+# goto_pose_arm0((duct_tape_pos+np.array([0, 0, 0.2])), gripper_down_quat)
+# goto_home_joint_position_arm0()
+#     """
 
     # 7. Run the step with the hardcoded action
     print("\nExecuting hardcoded action via exec_env.step()...")

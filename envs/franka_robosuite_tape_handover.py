@@ -104,7 +104,13 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
         # Video capture
         self._record_frames = False
         self._frame_buffer: list[np.ndarray] = []
+        self._camera_frame_buffers: dict[str, list[np.ndarray]] = {}  # Per-camera frame buffers
         self._subsample_rate = 1
+
+        # Joint state collection
+        self._collect_joint_states = False
+        self._joint_state_buffer: list[dict[str, np.ndarray]] = []
+        self._joint_state_collect_freq = 1  # Collect every N simulation steps
 
         # Robot link indices for transforms (robot0 and robot1)
         # Base links are fixed, so we cache their transforms
@@ -159,6 +165,10 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
 
         self._step_count = 0
         self._sim_step_count = 0
+        
+        # Clear joint state buffer on reset if collection is enabled
+        if self._collect_joint_states:
+            self._joint_state_buffer.clear()
 
         obs = self.get_observation()
         info = {
@@ -220,6 +230,9 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             if self._record_frames and self._sim_step_count % self._subsample_rate == 0:
                 self._record_frame()
 
+            if self._collect_joint_states and self._sim_step_count % self._joint_state_collect_freq == 0:
+                self._record_joint_state()
+
             steps += 1
             self._sim_step_count += 1
 
@@ -263,6 +276,9 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             if self._record_frames and self._sim_step_count % self._subsample_rate == 0:
                 self._record_frame()
 
+            if self._collect_joint_states and self._sim_step_count % self._joint_state_collect_freq == 0:
+                self._record_joint_state()
+
             steps += 1
             self._sim_step_count += 1
 
@@ -302,6 +318,9 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
 
         if self._record_frames and self._sim_step_count % self._subsample_rate == 0:
             self._record_frame()
+
+        if self._collect_joint_states and self._sim_step_count % self._joint_state_collect_freq == 0:
+            self._record_joint_state()
 
     def compute_reward(self) -> float:
         """Compute sparse handover reward.
@@ -447,12 +466,72 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
 
         return robosuite_obs
 
+    # ------------------------- Joint State Collection -------------------------
+
+    def enable_joint_state_collection(self, enabled: bool = True, *, clear: bool = True, freq: int = 1) -> None:
+        """Enable or disable joint state collection.
+        
+        Args:
+            enabled: If True, enable joint state collection
+            clear: If True, clear existing joint state buffer
+            freq: Collection frequency in simulation steps (collect every N steps)
+        """
+        self._collect_joint_states = enabled
+        self._joint_state_collect_freq = max(1, int(freq))
+        if clear:
+            self._joint_state_buffer.clear()
+        if enabled:
+            # Record initial state
+            self._record_joint_state()
+
+    def get_collected_joint_states(self, *, clear: bool = False) -> list[dict[str, np.ndarray]]:
+        """Get collected joint states.
+        
+        Args:
+            clear: If True, clear the buffer after retrieving states
+            
+        Returns:
+            List of dictionaries containing joint state data for each collected timestep.
+            Each dictionary has keys: 'robot0_joint_pos', 'robot0_joint_vel', 'robot0_gripper_qpos',
+            'robot1_joint_pos', 'robot1_joint_vel', 'robot1_gripper_qpos'
+        """
+        states = [state.copy() for state in self._joint_state_buffer]
+        if clear:
+            self._joint_state_buffer.clear()
+        return states
+
+    def _record_joint_state(self) -> None:
+        """Record current joint state to buffer."""
+        if not self._collect_joint_states:
+            return
+        
+        robosuite_obs = self.robosuite_env._get_observations()
+        state = {
+            "robot0_joint_pos": np.array(robosuite_obs["robot0_joint_pos"], dtype=np.float64).copy(),
+            "robot1_joint_pos": np.array(robosuite_obs["robot1_joint_pos"], dtype=np.float64).copy(),
+        }
+        
+        # Add velocities if available
+        if "robot0_joint_vel" in robosuite_obs:
+            state["robot0_joint_vel"] = np.array(robosuite_obs["robot0_joint_vel"], dtype=np.float64).copy()
+        if "robot1_joint_vel" in robosuite_obs:
+            state["robot1_joint_vel"] = np.array(robosuite_obs["robot1_joint_vel"], dtype=np.float64).copy()
+        
+        # Add gripper positions if available
+        if "robot0_gripper_qpos" in robosuite_obs:
+            state["robot0_gripper_qpos"] = np.array(robosuite_obs["robot0_gripper_qpos"], dtype=np.float64).copy()
+        if "robot1_gripper_qpos" in robosuite_obs:
+            state["robot1_gripper_qpos"] = np.array(robosuite_obs["robot1_gripper_qpos"], dtype=np.float64).copy()
+        
+        self._joint_state_buffer.append(state)
+
     # ------------------------- Video Capture -------------------------
 
     def enable_video_capture(self, enabled: bool = True, *, clear: bool = True) -> None:
         self._record_frames = enabled
         if clear:
             self._frame_buffer.clear()
+            self._camera_frame_buffers.clear()
         if enabled:
             self._record_frame()
 
@@ -462,12 +541,33 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             self._frame_buffer.clear()
         return frames
 
+    def get_camera_frames(self, *, clear: bool = False) -> dict[str, list[np.ndarray]]:
+        """Get collected video frames organized by camera name.
+        
+        Args:
+            clear: If True, clear the buffers after retrieving frames
+            
+        Returns:
+            Dictionary mapping camera names to lists of frames (each frame is a numpy array)
+        """
+        camera_frames = {
+            cam_name: [frame.copy() for frame in frames]
+            for cam_name, frames in self._camera_frame_buffers.items()
+        }
+        if clear:
+            self._camera_frame_buffers.clear()
+        return camera_frames
+
     def _record_frame(self) -> None:
         if not self._record_frames:
             return
 
+        # Record concatenated frame (for backward compatibility)
         frame = self._render_frame()
         self._frame_buffer.append(frame)
+        
+        # Record individual camera frames
+        self._record_camera_frames()
 
     def render(self, mode: str = "rgb_array") -> np.ndarray:  # type: ignore[override]
         if mode != "rgb_array":
@@ -503,6 +603,42 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                         pass
 
         return np.concatenate(frames, axis=1)
+
+    def _record_camera_frames(self) -> None:
+        """Record individual camera frames separately."""
+        if not self._record_frames:
+            return
+        
+        # Agentview camera
+        agentview_frame = self.robosuite_env.sim.render(
+            camera_name=self.save_camera_name,
+            width=self._render_width,
+            height=self._render_height,
+            depth=False,
+        )[::-1]
+        if "agentview" not in self._camera_frame_buffers:
+            self._camera_frame_buffers["agentview"] = []
+        self._camera_frame_buffers["agentview"].append(agentview_frame)
+        
+        if self.use_wrist_cameras:
+            # Record wrist cameras
+            for i in range(2):
+                for suffix in ["eye_in_hand", "camera_d405"]:
+                    cam_name = f"robot{i}_{suffix}"
+                    try:
+                        self.robosuite_env.sim.model.camera_name2id(cam_name)
+                        wrist_frame = self.robosuite_env.sim.render(
+                            camera_name=cam_name,
+                            width=self._render_width,
+                            height=self._render_height,
+                            depth=False,
+                        )[::-1]
+                        if cam_name not in self._camera_frame_buffers:
+                            self._camera_frame_buffers[cam_name] = []
+                        self._camera_frame_buffers[cam_name].append(wrist_frame)
+                        break
+                    except Exception:
+                        pass
 
     # Temporary viser debugging
     def _update_viser_server(
