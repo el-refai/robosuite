@@ -95,6 +95,8 @@ Examples:
         privileged=True,
         enable_render=False,
         use_wrist_cameras=True,  # Enable wrist cameras for data collection
+        yellow_tape_offset=yellow_offset_args,
+        duct_tape_offset=duct_offset_args,
     )
 
     # 2. Define the configuration for the high-level code execution environment
@@ -124,73 +126,71 @@ Examples:
     low_level_env.enable_joint_state_collection(True, clear=True, freq=joint_state_freq_steps)
 
     # --- Manually set object position (relative offset) ---
-    sim = low_level_env.robosuite_env.sim
+    # sim = low_level_env.robosuite_env.sim
 
-    # 1. Get the table center
-    table_center = sim.data.site_xpos[sim.model.site_name2id("table0_top")]
+    # # 1. Get the table center
+    # table_center = sim.data.site_xpos[sim.model.site_name2id("table0_top")]
 
-    total_offset_yellow_tape = np.array([0.0, 0.0, 0.0])
-    total_offset_duct_tape = np.array([0.0, 0.0, 0.0])
+    # total_offset_yellow_tape = np.array([0.0, 0.0, 0.0])
+    # total_offset_duct_tape = np.array([0.0, 0.0, 0.0])
 
-    # 2. Get current yellow tape position
-    yellow_tape_joint = low_level_env.robosuite_env.yellow_tape.joints[0]
-    yellow_qpos = sim.data.get_joint_qpos(yellow_tape_joint).copy()
-    duct_tape_joint = low_level_env.robosuite_env.duct_tape.joints[0]
-    duct_qpos = sim.data.get_joint_qpos(duct_tape_joint).copy()
+    # # 2. Get current yellow tape position
+    # yellow_tape_joint = low_level_env.robosuite_env.yellow_tape.joints[0]
+    # yellow_qpos = sim.data.get_joint_qpos(yellow_tape_joint).copy()
+    # duct_tape_joint = low_level_env.robosuite_env.duct_tape.joints[0]
+    # duct_qpos = sim.data.get_joint_qpos(duct_tape_joint).copy()
     
-    # 3. Calculate offset to center it (keeping original Z height)
-    yellow_offset = table_center - yellow_qpos[:3]
-    yellow_offset[2] = 0 # Optional: don't shift Z if you want it to stay on the surface
-    duct_offset = table_center - duct_qpos[:3]
-    duct_offset[2] = 0 # Optional: don't shift Z if you want it to stay on the surface
-    # print the offset
-    print(f"Yellow offset: {yellow_offset}")
-    print(f"Duct offset: {duct_offset}")
-    # Apply the offset (move the yellow tape to the table center)
-    yellow_qpos[:3] += yellow_offset
-    sim.data.set_joint_qpos(yellow_tape_joint, yellow_qpos)
-    total_offset_yellow_tape += yellow_offset
-    duct_qpos[:3] += duct_offset
-    sim.data.set_joint_qpos(duct_tape_joint, duct_qpos)
-    total_offset_duct_tape += duct_offset
+    # # 3. Calculate offset to center it (keeping original Z height)
+    # yellow_offset = table_center - yellow_qpos[:3]
+    # yellow_offset[2] = 0 # Optional: don't shift Z if you want it to stay on the surface
+    # duct_offset = table_center - duct_qpos[:3]
+    # duct_offset[2] = 0 # Optional: don't shift Z if you want it to stay on the surface
+    # # print the offset
+    # print(f"Yellow offset: {yellow_offset}")
+    # print(f"Duct offset: {duct_offset}")
+    # # Apply the offset (move the yellow tape to the table center)
+    # yellow_qpos[:3] += yellow_offset
+    # sim.data.set_joint_qpos(yellow_tape_joint, yellow_qpos)
+    # total_offset_yellow_tape += yellow_offset
+    # duct_qpos[:3] += duct_offset
+    # sim.data.set_joint_qpos(duct_tape_joint, duct_qpos)
+    # total_offset_duct_tape += duct_offset
 
-    # Define offsets [dx, dy, dz]
-    yellow_offset = yellow_offset_args
-    duct_offset = duct_offset_args
-    total_offset_yellow_tape += yellow_offset
-    total_offset_duct_tape += duct_offset
+    # # Define offsets [dx, dy, dz]
+    # yellow_offset = yellow_offset_args
+    # duct_offset = duct_offset_args
+    # total_offset_yellow_tape += yellow_offset
+    # total_offset_duct_tape += duct_offset
 
     
-    # Offsets are now passed in via command line arguments
-    # Yellow tape
-    yellow_tape_joint = low_level_env.robosuite_env.yellow_tape.joints[0]
-    yellow_qpos = sim.data.get_joint_qpos(yellow_tape_joint).copy()
-    yellow_qpos[:3] += yellow_offset
-    sim.data.set_joint_qpos(yellow_tape_joint, yellow_qpos)
+    # # Offsets are now passed in via command line arguments
+    # # Yellow tape
+    # yellow_tape_joint = low_level_env.robosuite_env.yellow_tape.joints[0]
+    # yellow_qpos = sim.data.get_joint_qpos(yellow_tape_joint).copy()
+    # yellow_qpos[:3] += yellow_offset
+    # sim.data.set_joint_qpos(yellow_tape_joint, yellow_qpos)
 
-    # Duct tape
-    duct_tape_joint = low_level_env.robosuite_env.duct_tape.joints[0]
-    duct_qpos = sim.data.get_joint_qpos(duct_tape_joint).copy()
-    duct_qpos[:3] += duct_offset
-    sim.data.set_joint_qpos(duct_tape_joint, duct_qpos)
+    # # Duct tape
+    # duct_tape_joint = low_level_env.robosuite_env.duct_tape.joints[0]
+    # duct_qpos = sim.data.get_joint_qpos(duct_tape_joint).copy()
+    # duct_qpos[:3] += duct_offset
+    # sim.data.set_joint_qpos(duct_tape_joint, duct_qpos)
 
-    sim.forward()
-    print(f"Total offset yellow tape: {total_offset_yellow_tape}")
-    print(f"Total offset duct tape: {total_offset_duct_tape}")
+    # sim.forward()
+    # print(f"Total offset yellow tape: {total_offset_yellow_tape}")
+    # print(f"Total offset duct tape: {total_offset_duct_tape}")
     # ------------------------------------
     action_code = f"""import numpy as np
 import viser.transforms as vtf
 
 # --- Get poses ---
 yellow_tape_pos, yellow_tape_quat = get_object_pose("yellow tape")
-yellow_tape_pos += np.array([{total_offset_yellow_tape[0]}, {total_offset_yellow_tape[1]}, {total_offset_yellow_tape[2]}]) 
 duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
-duct_tape_pos += np.array([{total_offset_duct_tape[0]}, {total_offset_duct_tape[1]}, {total_offset_duct_tape[2]}]) 
 
 arm1_pos, _ = get_arm1_gripper_pose()
 arm0_pos, _ = get_arm0_gripper_pose()
 handover_pos = (arm1_pos + arm0_pos) / 2
-handover_pos[0] -= 0.15 # shift the handover position back by 15cm to make it more reachable
+handover_pos[0] -= 0.1 # shift the handover position back by 15cm to make it more reachable
 handover_pos[1] += 0.1 # shift the handover position left by 10cm to make it more reachable
 arm0_handover_pos = handover_pos.copy()
 # Need a way to get the width of the yellow tape that isnt privileged
@@ -236,7 +236,7 @@ goto_home_joint_position_arm1()
 goto_home_joint_position_arm0()
 
 # Arm0: drop cube in bowl, shifted to the left because the tape is slightly off-center in the robot's grasp
-goto_pose_arm0((duct_tape_pos+np.array([0.1, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
+goto_pose_arm0((duct_tape_pos+np.array([0.02, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
 open_gripper_arm0()
 goto_pose_arm0((duct_tape_pos+np.array([0, -0.05, 0.2])), gripper_down_quat)
 goto_home_joint_position_arm0()
@@ -247,9 +247,7 @@ goto_home_joint_position_arm0()
 
 # # --- Get poses ---
 # yellow_tape_pos, yellow_tape_quat = get_object_pose("yellow tape")
-# yellow_tape_pos += np.array([{total_offset_yellow_tape[0]}, {total_offset_yellow_tape[1]}, {total_offset_yellow_tape[2]}]) 
 # duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
-# duct_tape_pos += np.array([{total_offset_duct_tape[0]}, {total_offset_duct_tape[1]}, {total_offset_duct_tape[2]}]) 
 
 # arm1_pos, _ = get_arm1_gripper_pose()
 # arm0_pos, _ = get_arm0_gripper_pose()
@@ -401,8 +399,23 @@ goto_home_joint_position_arm0()
     print(f"Reward: {reward}")
     print(f"Terminated: {terminated}")
     print(f"Truncated: {truncated}")
-    print(f"Task Completed: {info.get('task_completed')}")
+    task_completed = info.get('task_completed', False)
+    print(f"Task Completed: {task_completed}")
     
+    # 12. Check for failure or excessive length
+    max_frames = 1200 # 60 seconds at 20 fps
+    num_frames = 0
+    if all_video_frames and "agentview" in all_video_frames:
+        num_frames = len(all_video_frames["agentview"])
+    
+    if num_frames > max_frames:
+        print(f"\nFAILURE: Video length ({num_frames} frames) exceeds maximum allowed ({max_frames} frames, ~1 min).")
+        sys.exit(2)
+    
+    if info.get('sandbox_rc') != 0:
+        print(f"\nFAILURE: Code execution failed with an exception.")
+        sys.exit(1)
+
     print("\n--- STDOUT FROM CODE EXECUTION ---")
     print(info['stdout'])
     

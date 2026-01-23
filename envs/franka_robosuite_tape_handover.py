@@ -38,6 +38,8 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
         privileged: bool = True,
         enable_render: bool = False,
         use_wrist_cameras: bool = False,
+        yellow_tape_offset: np.ndarray | None = None,
+        duct_tape_offset: np.ndarray | None = None,
     ) -> None:
         super().__init__()
         self.controller_cfg = controller_cfg
@@ -88,6 +90,8 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                 reward_shaping=False,  # Use sparse reward (2.0 for success)
                 use_object_obs=True,  # Required for hammer_pos, hammer_quat, handle_xpos observations
                 use_camera_obs=True,  # Required for camera observations
+                yellow_tape_offset=yellow_tape_offset,
+                duct_tape_offset=duct_tape_offset,
             )
             # Get camera ID and modify its position and orientation
             agentview_cam_id = self.robosuite_env.sim.model.camera_name2id("agentview")

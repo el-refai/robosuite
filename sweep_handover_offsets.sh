@@ -98,24 +98,45 @@ echo "Starting sweep..."
 echo ""
 
 # Sweep over all combinations (8 × 8 = 64)
+MAX_RETRIES=3
 for yellow_offset_str in "${yellow_positions[@]}"; do
     for duct_offset_str in "${duct_positions[@]}"; do
         current_combo=$((current_combo + 1))
         
-        echo "[$current_combo/$total_combos] Running with:"
-        echo "  Yellow tape offset: [$yellow_offset_str]"
-        echo "  Duct tape offset: [$duct_offset_str]"
-        
-        # Run the test using uv run
-        uv run python -m test_scripts.test_handover_step \
-            --yellow_offset="$yellow_offset_str" \
-            --duct_offset="$duct_offset_str"
-        
-        exit_code=$?
-        if [ $exit_code -eq 0 ]; then
-            echo "  ✓ Completed successfully"
-        else
-            echo "  ✗ Failed with exit code $exit_code"
+        attempt=1
+        success=false
+        while [ $attempt -le $MAX_RETRIES ]; do
+            if [ $attempt -gt 1 ]; then
+                echo "[$current_combo/$total_combos] Attempt $attempt/$MAX_RETRIES for:"
+            else
+                echo "[$current_combo/$total_combos] Running with:"
+            fi
+            echo "  Yellow tape offset: [$yellow_offset_str]"
+            echo "  Duct tape offset: [$duct_offset_str]"
+            
+            # Run the test using uv run
+            venv/bin/python test_scripts/test_handover_step.py \
+                --yellow_offset="$yellow_offset_str" \
+                --duct_offset="$duct_offset_str"
+            
+            exit_code=$?
+            if [ $exit_code -eq 0 ]; then
+                echo "  ✓ Completed successfully"
+                success=true
+                break
+            elif [ $exit_code -eq 2 ]; then
+                echo "  ✗ Failed: Video length > 1 min (exit code $exit_code)"
+            else
+                echo "  ✗ Failed with exit code $exit_code"
+            fi
+            
+            echo "  Retrying... ($attempt/$MAX_RETRIES)"
+            attempt=$((attempt + 1))
+            echo ""
+        done
+
+        if [ "$success" = false ]; then
+            echo "  !!! Giving up after $MAX_RETRIES attempts"
         fi
         echo ""
     done
@@ -124,5 +145,5 @@ done
 echo "=========================================="
 echo "Sweep completed!"
 echo "Total combinations run: $current_combo"
-echo "Videos saved in: outputs/"
+echo "Videos saved in: dataset/"
 echo "=========================================="

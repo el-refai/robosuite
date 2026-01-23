@@ -153,6 +153,8 @@ class TwoArmTapeHandover(TwoArmEnv):
         tables_boundary=(0.8, 1.4, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
         yellow_tape_size=0.04,
+        yellow_tape_offset=None,
+        duct_tape_offset=None,
         use_camera_obs=True,
         use_object_obs=True,
         reward_scale=1.0,
@@ -184,6 +186,9 @@ class TwoArmTapeHandover(TwoArmEnv):
         self.table_offsets = np.zeros((1, 3))
         self.table_offsets[0, 2] = 0.8  # scale z offset
         self.yellow_tape_size = yellow_tape_size
+
+        self.yellow_tape_offset = np.array(yellow_tape_offset) if yellow_tape_offset is not None else np.zeros(3)
+        self.duct_tape_offset = np.array(duct_tape_offset) if duct_tape_offset is not None else np.zeros(3)
 
         # reward configuration
         self.reward_scale = reward_scale
@@ -379,40 +384,36 @@ class TwoArmTapeHandover(TwoArmEnv):
         # Create placement initializer
         self.placement_initializer = SequentialCompositeSampler(name="ObjectSampler")
 
-        # Calculate centers for left and right areas based on table boundary
-        y_left_center = -self.tables_boundary[1] * 3 / 8
-        y_right_center = self.tables_boundary[1] * 3 / 8
-
-        # Yellow tape on left side of table
+        # Yellow tape on table - offset is relative to table center
         self.placement_initializer.append_sampler(
             sampler=UniformRandomSampler(
                 name="YellowTapeSampler",
                 mujoco_objects=self.yellow_tape,
-                x_range=[0.0, 0.0], #x_range=[-0.15, 0.0],
-                y_range=[y_right_center, y_right_center], #y_range=[y_right_center, y_right_center + 0.15],
+                x_range=[self.yellow_tape_offset[0], self.yellow_tape_offset[0]],
+                y_range=[self.yellow_tape_offset[1], self.yellow_tape_offset[1]],
                 rotation=0,
                 rotation_axis="z",
                 ensure_object_boundary_in_range=False,
                 ensure_valid_placement=True,
                 reference_pos=self.table_offsets[0],
-                z_offset=0.01,
+                z_offset=0.01 + self.yellow_tape_offset[2],
                 rng=self.rng,
             )
         )
 
-        # Duct tape on right side of table
+        # Duct tape on table - offset is relative to table center
         self.placement_initializer.append_sampler(
             sampler=UniformRandomSampler(
                 name="DuctTapeSampler",
                 mujoco_objects=self.duct_tape,
-                x_range=[0.0, 0.0], #x_range=[0.0, 0.15],
-                y_range=[y_left_center, y_left_center], #y_range=[y_left_center - 0.15, y_left_center],
+                x_range=[self.duct_tape_offset[0], self.duct_tape_offset[0]],
+                y_range=[self.duct_tape_offset[1], self.duct_tape_offset[1]],
                 rotation=0,
                 rotation_axis="z",
                 ensure_object_boundary_in_range=False,
                 ensure_valid_placement=True,
                 reference_pos=self.table_offsets[0],
-                z_offset=0.01,
+                z_offset=0.01 + self.duct_tape_offset[2],
                 rng=self.rng,
             )
         )

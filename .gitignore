@@ -132,3 +132,7 @@ pyroki/
 
 # output files
 outputs/
+
+dataset*/
+
+*.mp4
