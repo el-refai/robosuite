@@ -5,16 +5,21 @@ calc() {
     awk "BEGIN {printf \"%.6f\", $1}"
 }
 
+YELLOW_BASE_X=0.0
+YELLOW_BASE_Y=0.0
+DUCT_BASE_X=0.0
+DUCT_BASE_Y=0.0
+
 # Range definitions
 YELLOW_X_MIN=-0.2
-YELLOW_X_MAX=0.2
-YELLOW_Y_MIN=0.15
-YELLOW_Y_MAX=0.6
+YELLOW_X_MAX=0.1
+YELLOW_Y_MIN=0.25
+YELLOW_Y_MAX=0.5
 
 DUCT_X_MIN=-0.2
-DUCT_X_MAX=0.2
-DUCT_Y_MIN=-0.6
-DUCT_Y_MAX=-0.15
+DUCT_X_MAX=0.1
+DUCT_Y_MIN=-0.5
+DUCT_Y_MAX=-0.25
 
 # Number of positions per tape (arranged in a grid)
 NUM_POSITIONS=8

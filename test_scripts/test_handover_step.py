@@ -91,6 +91,7 @@ Examples:
     # 1. Instantiate the low-level environment
     print("Initializing low-level FrankaRobosuiteTapeHandover environment...")
     low_level_env = FrankaRobosuiteTapeHandover(
+        controller_cfg="envs/configs/panda_joint_ctrl_slow.json",
         viser_debug=False,
         privileged=True,
         enable_render=False,
@@ -236,7 +237,7 @@ goto_home_joint_position_arm1()
 goto_home_joint_position_arm0()
 
 # Arm0: drop cube in bowl, shifted to the left because the tape is slightly off-center in the robot's grasp
-goto_pose_arm0((duct_tape_pos+np.array([0.02, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
+goto_pose_arm0((duct_tape_pos+np.array([0.0, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
 open_gripper_arm0()
 goto_pose_arm0((duct_tape_pos+np.array([0, -0.05, 0.2])), gripper_down_quat)
 goto_home_joint_position_arm0()

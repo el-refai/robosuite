@@ -132,7 +132,8 @@ pyroki/
 
 # output files
 outputs/
-
 dataset*/
-
 *.mp4
+
+# wandb files
+wandb/

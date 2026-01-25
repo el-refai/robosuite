@@ -6,7 +6,7 @@
     <default class="collision">
       <!-- <geom group="0" type="mesh" density="50" /> -->
       <!-- below line for higher friction -->
-      <geom group="0" type="mesh" density="50" solref="0.001 1" solimp="0.998 0.998 0.001" friction="2.5 1 0.2" condim="4"/> 
+      <geom group="0" type="mesh" density="50" solref="0.001 1" solimp="0.998 0.998 0.001" friction="10 10 10" condim="4"/> 
     </default>
   </default>
   <asset>
