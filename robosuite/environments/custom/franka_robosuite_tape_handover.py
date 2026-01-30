@@ -21,9 +21,9 @@ from robosuite.controllers.composite.composite_controller_factory import (
 )
 from robosuite.utils.camera_utils import get_real_depth_map
 
-from envs.base_env import BaseEnv
-from utils.camera_utils import obs_get_rgb
-from utils.depth_utils import depth_color_to_pointcloud
+from robosuite.environments.custom.base_env import BaseEnv
+from robosuite.environments.custom.utils.camera_utils import obs_get_rgb
+from robosuite.environments.custom.utils.depth_utils import depth_color_to_pointcloud
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -31,7 +31,7 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 class FrankaRobosuiteTapeHandover(BaseEnv):
     def __init__(
         self,
-        controller_cfg: str = "envs/configs/panda_joint_ctrl.json",
+        controller_cfg: str = "robosuite/environments/custom/configs/panda_joint_ctrl.json",
         max_steps: int = 5000,
         seed: int | None = None,
         viser_debug: bool = False,  # TODO: move the viser visualization manager into a separate class, low level env agnostic
