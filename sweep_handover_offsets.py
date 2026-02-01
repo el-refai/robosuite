@@ -20,43 +20,60 @@ def get_dir_name(yellow_offset_str, duct_offset_str):
     return dir_name.replace(".", "_").replace("-", "neg")
 
 def main():
-    YELLOW_BASE_X = 0.0
-    YELLOW_BASE_Y = 0.0
-    DUCT_BASE_X = 0.0
-    DUCT_BASE_Y = 0.0
-
-    # Range definitions from sweep_handover_offsets.sh
-    YELLOW_X_MIN, YELLOW_X_MAX = -0.2, 0.1
-    YELLOW_Y_MIN, YELLOW_Y_MAX = 0.25, 0.5
-    DUCT_X_MIN, DUCT_X_MAX = -0.2, 0.1
-    DUCT_Y_MIN, DUCT_Y_MAX = -0.5, -0.25
-
-    NUM_X = 4
-    NUM_Y = 2
+    # Grid specification:
+    # - Each cell: 0.18m tall (x-direction) x 0.13m wide (y-direction)
+    # - Grid: 3 rows tall x 6 columns wide
+    # - Left 3 columns: yellow tape, Right 3 columns: duct tape
+    # - Grid centered on table (y-direction), bottom edge flush with table bottom (x-direction)
     
-    YELLOW_X_STEP = calc_steps(YELLOW_X_MIN, YELLOW_X_MAX, NUM_X)
-    YELLOW_Y_STEP = calc_steps(YELLOW_Y_MIN, YELLOW_Y_MAX, NUM_Y)
-    DUCT_X_STEP = calc_steps(DUCT_X_MIN, DUCT_X_MAX, NUM_X)
-    DUCT_Y_STEP = calc_steps(DUCT_Y_MIN, DUCT_Y_MAX, NUM_Y)
-
-    # Generate yellow positions
+    CELL_HEIGHT = 0.18  # x-direction (depth from camera view)
+    CELL_WIDTH = 0.13   # y-direction (left-right from camera view)
+    NUM_ROWS = 3        # rows in x-direction
+    NUM_COLS = 6        # total columns in y-direction (3 yellow + 3 duct)
+    
+    # Table dimensions: 0.74m (x) x 1.19m (y)
+    TABLE_X = 0.74
+    TABLE_Y = 1.19
+    
+    # Grid dimensions
+    GRID_HEIGHT = NUM_ROWS * CELL_HEIGHT  # 0.54m
+    GRID_WIDTH = NUM_COLS * CELL_WIDTH    # 0.78m
+    
+    # Grid positioning:
+    # - Centered on table in y-direction
+    # - Bottom edge flush with table bottom in x-direction (x = -TABLE_X/2)
+    GRID_X_MIN = -TABLE_X / 2  # -0.37 (bottom of table)
+    GRID_Y_MIN = -GRID_WIDTH / 2  # -0.39 (centered on table)
+    
+    # Calculate row centers (x-direction)
+    row_centers = []
+    for row in range(NUM_ROWS):
+        x = GRID_X_MIN + (row + 0.5) * CELL_HEIGHT
+        row_centers.append(x)
+    
+    # Calculate column centers (y-direction)
+    col_centers = []
+    for col in range(NUM_COLS):
+        y = GRID_Y_MIN + (col + 0.5) * CELL_WIDTH
+        col_centers.append(y)
+    
+    # Camera is at -x looking toward +x, so positive y = LEFT in image, negative y = RIGHT
+    # Yellow tape: left 3 columns in image (positive y, cols 3, 4, 5)
+    yellow_cols = col_centers[3:]  # y = +0.065, +0.195, +0.325
+    
+    # Duct tape: right 3 columns in image (negative y, cols 0, 1, 2)
+    duct_cols = col_centers[:3]    # y = -0.325, -0.195, -0.065
+    
+    # Generate yellow positions (3 cols x 3 rows = 9 positions)
     yellow_positions = []
-    for i in range(NUM_X):
-        x_offset = YELLOW_X_MIN + i * YELLOW_X_STEP
-        x = YELLOW_BASE_X + x_offset
-        for j in range(NUM_Y):
-            y_offset = YELLOW_Y_MIN + j * YELLOW_Y_STEP
-            y = YELLOW_BASE_Y + y_offset
+    for x in row_centers:
+        for y in yellow_cols:
             yellow_positions.append(f"{x:.6f},{y:.6f},0.0")
 
-    # Generate duct positions
+    # Generate duct positions (3 cols x 3 rows = 9 positions)
     duct_positions = []
-    for i in range(NUM_X):
-        x_offset = DUCT_X_MIN + i * DUCT_X_STEP
-        x = DUCT_BASE_X + x_offset
-        for j in range(NUM_Y):
-            y_offset = DUCT_Y_MIN + j * DUCT_Y_STEP
-            y = DUCT_BASE_Y + y_offset
+    for x in row_centers:
+        for y in duct_cols:
             duct_positions.append(f"{x:.6f},{y:.6f},0.0")
 
     total_combos = len(yellow_positions) * len(duct_positions)

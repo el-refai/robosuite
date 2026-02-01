@@ -57,14 +57,14 @@ Examples:
     parser.add_argument(
         '--yellow_offset',
         type=parse_offset_list,
-        default='0.2,0.5,0.0',
-        help='Yellow tape offset as comma-separated x,y,z values (default: 0.0,-0.7,0.0)'
+        default='0.1,0.4,0.0',
+        help='Yellow tape offset as comma-separated x,y,z values (default: 0.1,0.4,0.0)'
     )
     parser.add_argument(
         '--duct_offset',
         type=parse_offset_list,
-        default='0.3,-0.5,0.0',
-        help='Duct tape offset as comma-separated x,y,z values (default: 0.0,0.7,0.0)'
+        default='0.1,-0.4,0.0',
+        help='Duct tape offset as comma-separated x,y,z values (default: 0.1,-0.4,0.0)'
     )
     parser.add_argument(
         '--joint_state_fps',
@@ -197,7 +197,7 @@ arm0_handover_pos = handover_pos.copy()
 # Need a way to get the width of the yellow tape that isnt privileged
 # this is half the width of the franka gripper:
 arm0_handover_pos[1] -= 0.1025 # shift handover position right by half the width of the franka gripper
-arm0_handover_pos[0] += 0.02 # shift handover position forward by 2cm
+arm0_handover_pos[0] += 0.03 # shift handover position forward by 2cm
 
 # --- Pickup orientation ---
 gripper_down_quat = np.array([0, 1, 0, 0])

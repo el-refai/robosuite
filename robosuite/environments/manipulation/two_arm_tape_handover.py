@@ -150,7 +150,7 @@ class TwoArmTapeHandover(TwoArmEnv):
         gripper_types="default",
         # gripper_types="Robotiq85Gripper",
         initialization_noise="default",
-        tables_boundary=(0.8, 1.4, 0.05),
+        tables_boundary=(0.74, 1.19, 0.05),
         table_friction=(1.0, 5e-3, 1e-4),
         yellow_tape_size=0.04,
         yellow_tape_offset=None,
