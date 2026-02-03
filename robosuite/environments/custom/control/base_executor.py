@@ -9,9 +9,9 @@ from typing import Any, SupportsFloat
 import numpy as np
 from gymnasium import Env, spaces
 
-from envs.base_env import BaseEnv, ObsType, get_env
-from envs.configs.instantiate import instantiate as cfg_instantiate
-from envs.configs.loader import DictLoader
+from robosuite.environments.custom.base_env import BaseEnv, ObsType, get_env
+from robosuite.environments.custom.configs.instantiate import instantiate as cfg_instantiate
+from robosuite.environments.custom.configs.loader import DictLoader
 from api.base_api import ApiBase, get_api
 
 

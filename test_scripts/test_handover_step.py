@@ -20,8 +20,8 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(root_dir)
 
 # Now we can import the classes
-from envs.franka_robosuite_tape_handover import FrankaRobosuiteTapeHandover
-from envs.control.base_executor import CodeExecutionEnvBase, CodeExecEnvConfig
+from robosuite.environments.custom.franka_robosuite_tape_handover import FrankaRobosuiteTapeHandover
+from robosuite.environments.custom.control.base_executor import CodeExecutionEnvBase, CodeExecEnvConfig
 from api.franka_priviledged_api import FrankaControlTapeHandoverPrivilegedApi
 from api.base_api import register_api
 
