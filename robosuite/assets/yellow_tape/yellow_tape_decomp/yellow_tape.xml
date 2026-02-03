@@ -273,7 +273,7 @@
       </body>
       <site name="bottom_site" pos="-0.00015647895634174347 -3.774091601371765e-05 -0.012816530652344227" size="0.002" rgba="0 0 0 0" />
       <site rgba="0 0 0 0" size="0.005" pos="0 0 0.0254" name="top_site" />
-      <site rgba="0 0 0 0" size="0.005" pos="0.095 0.095 0" name="horizontal_radius_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.0475 0 0" name="horizontal_radius_site" />
     </body>
   </worldbody>
 </mujoco>

@@ -197,7 +197,7 @@ arm0_handover_pos = handover_pos.copy()
 # Need a way to get the width of the yellow tape that isnt privileged
 # this is half the width of the franka gripper:
 arm0_handover_pos[1] -= 0.1025 # shift handover position right by half the width of the franka gripper
-arm0_handover_pos[0] += 0.03 # shift handover position forward by 2cm
+arm0_handover_pos[0] += 0.035 # shift handover position forward by 2cm
 
 # --- Pickup orientation ---
 gripper_down_quat = np.array([0, 1, 0, 0])

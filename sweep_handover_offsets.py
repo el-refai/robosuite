@@ -78,7 +78,7 @@ def main():
 
     total_combos = len(yellow_positions) * len(duct_positions)
     current_combo = 0
-    MAX_RETRIES = 3
+    MAX_RETRIES = 1
     
     # Project name
     project_name = f"robosuite-handover-sweep-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -131,7 +131,7 @@ def main():
                 # Run the simulation using the venv's python
                 # Use --flag=value format to handle negative numbers correctly
                 cmd = [
-                    "venv/bin/python", "test_scripts/test_handover_step.py",
+                    "venv/bin/python", "test_scripts/test_pickup_step.py",
                     f"--yellow_offset={yellow_offset}",
                     f"--duct_offset={duct_offset}"
                 ]
