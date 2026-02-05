@@ -4,7 +4,7 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
-from envs.base_env import BaseEnv
+from robosuite.environments.custom.base_env import BaseEnv
 
 
 class ApiBase(ABC):

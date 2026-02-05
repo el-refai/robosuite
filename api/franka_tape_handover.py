@@ -1,4 +1,4 @@
-from envs.control.base_executor import CodeExecutionEnvBase
+from robosuite.environments.custom.control.base_executor import CodeExecutionEnvBase
 
 PROMPT = """
 You are controlling a two-arm Franka Emika robot system with API described below.

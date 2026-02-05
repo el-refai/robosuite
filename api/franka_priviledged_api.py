@@ -8,9 +8,7 @@ import viser.transforms as vtf
 from PIL import Image, ImageDraw
 from scipy.spatial.transform import Rotation as SciRotation
 
-from envs.base_env import (
-    BaseEnv,
-)
+from robosuite.environments.custom.base_env import BaseEnv
 from api import pyroki_snippets as pks  # type: ignore
 from api.base_api import ApiBase
 # from api.grasp_graspnet import init_contact_graspnet

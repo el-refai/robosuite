@@ -10,7 +10,7 @@ import yaml
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 # from omegaconf import SCMode
-from envs.configs.instantiate import _convert_target_to_string
+from robosuite.environments.custom.configs.instantiate import _convert_target_to_string
 
 
 def _visit_dict_config(cfg: DictConfig | ListConfig | Any, func: Any) -> None:  # type: ignore
