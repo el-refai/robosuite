@@ -86,18 +86,19 @@ Examples:
     
     # Register the API so CodeExecutionEnvBase can find it
     # The name here is used by CodeExecutionEnvBase to look up the API
-    register_api("franka-handover-privileged", lambda env: FrankaControlTapeHandoverPrivilegedApi(env))
+    register_api("franka-handover-privileged", lambda env: FrankaControlTapeHandoverPrivilegedApi(env, enable_viser=True))
 
     # 1. Instantiate the low-level environment
     print("Initializing low-level FrankaRobosuiteTapeHandover environment...")
     low_level_env = FrankaRobosuiteTapeHandover(
-        controller_cfg="envs/configs/panda_joint_ctrl_slow.json",
+        controller_cfg="robosuite/environments/custom/configs/panda_joint_ctrl_slow.json",
         viser_debug=False,
         privileged=True,
         enable_render=False,
         use_wrist_cameras=True,  # Enable wrist cameras for data collection
         yellow_tape_offset=yellow_offset_args,
         duct_tape_offset=duct_offset_args,
+    
     )
 
     # 2. Define the configuration for the high-level code execution environment
@@ -217,13 +218,16 @@ lifted = yellow_tape_pos.copy(); lifted[2] = 0.15
 goto_pose_arm1(lifted, gripper_down_quat)
 goto_home_joint_position_arm1()
 
-# Arm1: move to handover (shifted toward arm0)
-goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
 
 # Arm0 approach
 # arm0_quat = np.array([0.707, 0.707, 0, 0])
 arm0_quat = gripper_side_quat
 open_gripper_arm0()
+goto_pose_arm0(arm0_handover_pos + np.array([-0.1, 0, 0]), arm0_quat, z_approach=0.10)
+
+# Arm1: move to handover (shifted toward arm0)
+goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
+
 goto_pose_arm0(arm0_handover_pos, arm0_quat, z_approach=0.10)
 close_gripper_arm0()
 

@@ -9,4 +9,11 @@ from ._solve_ik_with_manipulability import (
 from ._solve_ik_with_multiple_targets import (
     solve_ik_with_multiple_targets as solve_ik_with_multiple_targets,
 )
+from ._solve_ik_policy_optimized import (
+    solve_ik_policy_optimized as solve_ik_policy_optimized,
+)
 from ._trajopt import solve_trajopt as solve_trajopt
+from ._optimize_trajectory import (
+    optimize_trajectory as optimize_trajectory,
+    compute_trajectory_metrics as compute_trajectory_metrics,
+)
