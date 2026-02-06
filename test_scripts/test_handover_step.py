@@ -57,14 +57,14 @@ Examples:
     parser.add_argument(
         '--yellow_offset',
         type=parse_offset_list,
-        default='0.1,0.4,0.0',
-        help='Yellow tape offset as comma-separated x,y,z values (default: 0.1,0.4,0.0)'
+        default='-0.28,0.065,0.0',
+        help='Yellow tape offset as comma-separated x,y,z values (default: -0.28,0.065,0.0)'
     )
     parser.add_argument(
         '--duct_offset',
         type=parse_offset_list,
-        default='0.1,-0.4,0.0',
-        help='Duct tape offset as comma-separated x,y,z values (default: 0.1,-0.4,0.0)'
+        default='-0.1,-0.065,0.0',
+        help='Duct tape offset as comma-separated x,y,z values (default: -0.1,-0.065,0.0)'
     )
     parser.add_argument(
         '--joint_state_fps',
@@ -89,9 +89,10 @@ Examples:
     register_api("franka-handover-privileged", lambda env: FrankaControlTapeHandoverPrivilegedApi(env))
 
     # 1. Instantiate the low-level environment
+    controller_cfg_path = os.path.join(root_dir, "robosuite", "environments", "custom", "configs", "panda_joint_ctrl_slow.json")
     print("Initializing low-level FrankaRobosuiteTapeHandover environment...")
     low_level_env = FrankaRobosuiteTapeHandover(
-        controller_cfg="envs/configs/panda_joint_ctrl_slow.json",
+        controller_cfg=controller_cfg_path,
         viser_debug=False,
         privileged=True,
         enable_render=False,
@@ -215,7 +216,12 @@ goto_pose_arm1((yellow_tape_pos+np.array([-0.01, 0.05, -0.02])), gripper_down_qu
 close_gripper_arm1()
 lifted = yellow_tape_pos.copy(); lifted[2] = 0.15
 goto_pose_arm1(lifted, gripper_down_quat)
-goto_home_joint_position_arm1()
+# goto_home_joint_position_arm1()
+
+above_pickup_at_handover_height = get_arm_base_midpoint_pos()
+
+goto_pose_arm1(above_pickup_at_handover_height, gripper_rotated_side_quat)
+
 
 # Arm1: move to handover (shifted toward arm0)
 goto_pose_arm1(handover_pos, gripper_rotated_side_quat)

@@ -64,16 +64,26 @@ def main():
     # Duct tape: right 3 columns in image (negative y, cols 0, 1, 2)
     duct_cols = col_centers[:3]    # y = -0.325, -0.195, -0.065
     
-    # Generate yellow positions (3 cols x 3 rows = 9 positions)
+    # Excluded corner positions (these cause issues)
+    # Yellow at (-0.28, 0.325) - extreme corner
+    EXCLUDED_YELLOW = (row_centers[0], yellow_cols[2])  # (-0.28, 0.325)
+    # Duct at (-0.28, -0.325) - extreme corner  
+    EXCLUDED_DUCT = (row_centers[0], duct_cols[0])  # (-0.28, -0.325)
+
+    # Generate yellow positions (3 cols x 3 rows = 9 positions, minus excluded)
     yellow_positions = []
     for x in row_centers:
         for y in yellow_cols:
+            if (x, y) == EXCLUDED_YELLOW:
+                continue  # Skip excluded corner position
             yellow_positions.append(f"{x:.6f},{y:.6f},0.0")
 
-    # Generate duct positions (3 cols x 3 rows = 9 positions)
+    # Generate duct positions (3 cols x 3 rows = 9 positions, minus excluded)
     duct_positions = []
     for x in row_centers:
         for y in duct_cols:
+            if (x, y) == EXCLUDED_DUCT:
+                continue  # Skip excluded corner position
             duct_positions.append(f"{x:.6f},{y:.6f},0.0")
 
     total_combos = len(yellow_positions) * len(duct_positions)
@@ -86,6 +96,8 @@ def main():
     print("==========================================")
     print("Handover Offset Sweep (Python version)")
     print("==========================================")
+    print(f"Yellow positions: {len(yellow_positions)} (excluded corner at {EXCLUDED_YELLOW})")
+    print(f"Duct positions: {len(duct_positions)} (excluded corner at {EXCLUDED_DUCT})")
     print(f"Total combinations: {total_combos}")
     print("==========================================")
 

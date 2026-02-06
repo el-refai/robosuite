@@ -74,8 +74,29 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             "close_gripper_arm1": self.close_gripper_arm1,
             "goto_home_joint_position_arm0": self.goto_home_joint_position_arm0,
             "goto_home_joint_position_arm1": self.goto_home_joint_position_arm1,
+            "get_arm_base_midpoint_z": self.get_arm_base_midpoint_z,
+            "get_arm_base_midpoint_pos": self.get_arm_base_midpoint_pos,
         }
         return fns
+
+    def get_arm_base_midpoint_pos(self) -> np.ndarray:
+        """Position (x, y, z) of the midpoint between the two arm bases, in robot0's base frame."""
+        if not hasattr(self._env, "base_link_wxyz_xyz_0") or not hasattr(self._env, "base_link_wxyz_xyz_1"):
+            raise RuntimeError("Environment does not provide base transforms.")
+        base0_transform = self._vtf.SE3(wxyz_xyz=self._env.base_link_wxyz_xyz_0)
+        base1_transform = self._vtf.SE3(wxyz_xyz=self._env.base_link_wxyz_xyz_1)
+        base0_transform_inv = base0_transform.inverse()
+        # Arm 0 base in robot0 frame is origin; arm 1 base in robot0 frame
+        base1_in_robot0 = np.asarray(
+            (base0_transform_inv @ self._vtf.SE3.from_translation(base1_transform.translation())).translation(),
+            dtype=np.float64,
+        )
+        midpoint = (np.zeros(3, dtype=np.float64) + base1_in_robot0) / 2.0
+        return midpoint
+
+    def get_arm_base_midpoint_z(self) -> float:
+        """Z-coordinate of the midpoint between the two arm bases, in robot0's base frame."""
+        return float(self.get_arm_base_midpoint_pos()[2])
 
     def get_object_pose(
         self, object_name: str

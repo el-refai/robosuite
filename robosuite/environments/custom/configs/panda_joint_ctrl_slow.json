@@ -10,7 +10,7 @@
                 "output_min": -0.2,
                 "kd": 400,
                 "kv": 200,
-                "kp": 500,
+                "kp": 1000,
                 "velocity_limits": [-1.0, 1.0],
                 "interpolation": null,
                 "ramp_ratio": 0.2,
