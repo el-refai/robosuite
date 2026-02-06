@@ -192,7 +192,7 @@ duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
 arm1_pos, _ = get_arm1_gripper_pose()
 arm0_pos, _ = get_arm0_gripper_pose()
 handover_pos = (arm1_pos + arm0_pos) / 2
-handover_pos[0] -= 0.1 # shift the handover position back by 15cm to make it more reachable
+handover_pos[0] -= 0.15 # shift the handover position back by 15cm to make it more reachable
 handover_pos[1] += 0.1 # shift the handover position left by 10cm to make it more reachable
 arm0_handover_pos = handover_pos.copy()
 # Need a way to get the width of the yellow tape that isnt privileged
@@ -218,7 +218,8 @@ lifted = yellow_tape_pos.copy(); lifted[2] = 0.15
 goto_pose_arm1(lifted, gripper_down_quat)
 # goto_home_joint_position_arm1()
 
-above_pickup_at_handover_height = get_arm_base_midpoint_pos()
+above_pickup_at_handover_height = lifted.copy()
+above_pickup_at_handover_height[2] = get_arm_base_midpoint_z()
 
 goto_pose_arm1(above_pickup_at_handover_height, gripper_rotated_side_quat)
 
