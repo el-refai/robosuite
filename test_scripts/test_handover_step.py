@@ -241,7 +241,7 @@ shifted_arm0_pos = arm0_handover_pos + vtf.SO3(wxyz=arm0_quat).as_matrix() @ np.
 goto_pose_arm0(shifted_arm0_pos, arm0_quat)
 goto_pose_arm1(shifted_handover_pos, gripper_rotated_side_quat)
 goto_home_joint_position_arm1()
-goto_home_joint_position_arm0()
+# goto_home_joint_position_arm0()
 
 # Arm0: drop cube in bowl, shifted to the left because the tape is slightly off-center in the robot's grasp
 goto_pose_arm0((duct_tape_pos+np.array([0.0, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
