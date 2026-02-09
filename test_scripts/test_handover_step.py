@@ -86,7 +86,7 @@ Examples:
     
     # Register the API so CodeExecutionEnvBase can find it
     # The name here is used by CodeExecutionEnvBase to look up the API
-    register_api("franka-handover-privileged", lambda env: FrankaControlTapeHandoverPrivilegedApi(env, enable_viser=True))
+    register_api("franka-handover-privileged", lambda env: FrankaControlTapeHandoverPrivilegedApi(env, enable_viser=False))
 
     # 1. Instantiate the low-level environment
     print("Initializing low-level FrankaRobosuiteTapeHandover environment...")
@@ -216,17 +216,20 @@ goto_pose_arm1((yellow_tape_pos+np.array([-0.01, 0.05, -0.02])), gripper_down_qu
 close_gripper_arm1()
 lifted = yellow_tape_pos.copy(); lifted[2] = 0.15
 goto_pose_arm1(lifted, gripper_down_quat)
-goto_home_joint_position_arm1()
+#goto_home_joint_position_arm1()
+above_pickup_at_handover_height = lifted.copy()
+above_pickup_at_handover_height[2] = get_arm_base_midpoint_z()
 
+goto_pose_arm1(above_pickup_at_handover_height, gripper_down_quat)
+
+# Arm1: move to handover (shifted toward arm0)
+goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
 
 # Arm0 approach
 # arm0_quat = np.array([0.707, 0.707, 0, 0])
 arm0_quat = gripper_side_quat
 open_gripper_arm0()
 goto_pose_arm0(arm0_handover_pos + np.array([-0.1, 0, 0]), arm0_quat, z_approach=0.10)
-
-# Arm1: move to handover (shifted toward arm0)
-goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
 
 goto_pose_arm0(arm0_handover_pos, arm0_quat, z_approach=0.10)
 close_gripper_arm0()
@@ -238,7 +241,7 @@ shifted_arm0_pos = arm0_handover_pos + vtf.SO3(wxyz=arm0_quat).as_matrix() @ np.
 goto_pose_arm0(shifted_arm0_pos, arm0_quat)
 goto_pose_arm1(shifted_handover_pos, gripper_rotated_side_quat)
 goto_home_joint_position_arm1()
-goto_home_joint_position_arm0()
+#goto_home_joint_position_arm0()
 
 # Arm0: drop cube in bowl, shifted to the left because the tape is slightly off-center in the robot's grasp
 goto_pose_arm0((duct_tape_pos+np.array([0.0, -0.03, 0.05])), gripper_down_quat, z_approach=0.15)
