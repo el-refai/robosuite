@@ -52,6 +52,10 @@ def main():
 Examples:
   python test_handover_step.py --yellow_offset 0.0,-0.7,0.0 --duct_offset 0.0,0.7,0.0
   python test_handover_step.py --yellow_offset 0.1,-0.6,0.0 --duct_offset -0.1,0.6,0.0
+
+Data collection randomization:
+  - Handover position: use --randomize_handover to vary where the handoff happens (blend between arms, x/y shifts, z).
+  - Pickup/placement: vary --yellow_offset and --duct_offset per run (e.g. loop with random samples, or use sweep_handover_offsets.py for a grid).
         """
     )
     parser.add_argument(
@@ -72,7 +76,48 @@ Examples:
         default=30.0,
         help='Sampling rate for joint state and video capture in fps; use same for both so #image = #proprio (default: 30.0). Increase to 60 or 120 for more frames.'
     )
-    
+    # Handover position randomization (for more diverse data collection)
+    parser.add_argument(
+        '--randomize_handover',
+        action='store_true',
+        help='Randomize handover position (blend between arms, x/y shifts, z jitter) for each rollout.'
+    )
+    parser.add_argument(
+        '--handover_x_shift_range',
+        type=str,
+        default='-0.20,-0.10',
+        help='Comma-separated min,max for handover x shift in m (default: -0.20,-0.10). Used only if --randomize_handover.'
+    )
+    parser.add_argument(
+        '--handover_y_shift_range',
+        type=str,
+        default='0.05,0.15',
+        help='Comma-separated min,max for handover y shift in m (default: 0.05,0.15). Used only if --randomize_handover.'
+    )
+    parser.add_argument(
+        '--handover_alpha_range',
+        type=str,
+        default='0.35,0.65',
+        help='Comma-separated min,max for blend alpha: handover_pos = (1-alpha)*arm1 + alpha*arm0 (default: 0.35,0.65). Used only if --randomize_handover.'
+    )
+    parser.add_argument(
+        '--handover_z_jitter_range',
+        type=str,
+        default='-0.02,0.03',
+        help='Comma-separated min,max for handover z jitter in m (default: -0.02,0.03). Used only if --randomize_handover.'
+    )
+    parser.add_argument(
+        '--handover_seed',
+        type=int,
+        default=None,
+        help='Seed for handover randomization (default: None). Used only if --randomize_handover.'
+    )
+    parser.add_argument(
+        '--handover_angle_range',
+        type=str,
+        default='-0.35,0.35',
+        help='Comma-separated min,max for handover yaw angle in radians (rotation around world Z; default ±0.35 rad ≈ ±20°). Used only if --randomize_handover.'
+    )
     args = parser.parse_args()
     
     # Extract offsets as numpy arrays
@@ -83,6 +128,39 @@ Examples:
     
     print(f"Yellow tape offset: {yellow_offset_args}")
     print(f"Duct tape offset: {duct_offset_args}")
+
+    # Handover position randomization (for diverse data collection)
+    def parse_range(s, name="range"):
+        parts = [x.strip() for x in s.split(",")]
+        if len(parts) != 2:
+            raise ValueError(f"{name} must be 'min,max', got {s}")
+        return float(parts[0]), float(parts[1])
+
+    use_handover_rand = getattr(args, "randomize_handover", False)
+    if use_handover_rand:
+        rng_handover = np.random.default_rng(args.handover_seed)
+        x_lo, x_hi = parse_range(args.handover_x_shift_range, "handover_x_shift_range")
+        y_lo, y_hi = parse_range(args.handover_y_shift_range, "handover_y_shift_range")
+        a_lo, a_hi = parse_range(args.handover_alpha_range, "handover_alpha_range")
+        z_lo, z_hi = parse_range(args.handover_z_jitter_range, "handover_z_jitter_range")
+        handover_x_shift = rng_handover.uniform(x_lo, x_hi)
+        handover_y_shift = rng_handover.uniform(y_lo, y_hi)
+        handover_alpha = rng_handover.uniform(a_lo, a_hi)
+        handover_z_jitter = rng_handover.uniform(z_lo, z_hi)
+        angle_lo, angle_hi = parse_range(args.handover_angle_range, "handover_angle_range")
+        handover_angle_rad = rng_handover.uniform(angle_lo, angle_hi)
+        # arm0_handover offset from center (half gripper width 0.1025, small forward 0.035) - add small jitter
+        arm0_y_offset = -0.1025 + rng_handover.uniform(-0.01, 0.01)
+        arm0_x_offset = 0.035 + rng_handover.uniform(-0.01, 0.01)
+        print(f"Handover randomization: x_shift={handover_x_shift:.3f}, y_shift={handover_y_shift:.3f}, alpha={handover_alpha:.3f}, z_jitter={handover_z_jitter:.3f}, angle_rad={handover_angle_rad:.3f}")
+    else:
+        handover_x_shift = -0.15
+        handover_y_shift = 0.1
+        handover_alpha = 0.5
+        handover_z_jitter = 0.0
+        handover_angle_rad = 0.0
+        arm0_y_offset = -0.1025
+        arm0_x_offset = 0.035
     
     # Register the API so CodeExecutionEnvBase can find it
     # The name here is used by CodeExecutionEnvBase to look up the API
@@ -182,6 +260,7 @@ Examples:
     # print(f"Total offset yellow tape: {total_offset_yellow_tape}")
     # print(f"Total offset duct tape: {total_offset_duct_tape}")
     # ------------------------------------
+    # Handover position: midpoint with blend alpha, then shifts (fixed or randomized via --randomize_handover)
     action_code = f"""import numpy as np
 import viser.transforms as vtf
 
@@ -191,14 +270,13 @@ duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
 
 arm1_pos, _ = get_arm1_gripper_pose()
 arm0_pos, _ = get_arm0_gripper_pose()
-handover_pos = (arm1_pos + arm0_pos) / 2
-handover_pos[0] -= 0.15 # shift the handover position back by 15cm to make it more reachable
-handover_pos[1] += 0.1 # shift the handover position left by 10cm to make it more reachable
-arm0_handover_pos = handover_pos.copy()
-# Need a way to get the width of the yellow tape that isnt privileged
-# this is half the width of the franka gripper:
-arm0_handover_pos[1] -= 0.1025 # shift handover position right by half the width of the franka gripper
-arm0_handover_pos[0] += 0.035 # shift handover position forward by 2cm
+# handover_pos: blend between arms (alpha=0.5 is midpoint), then apply x/y shifts and optional z jitter
+handover_pos = (1.0 - {handover_alpha}) * arm1_pos + {handover_alpha} * arm0_pos
+handover_pos[0] += {handover_x_shift}
+handover_pos[1] += {handover_y_shift}
+handover_pos[2] += {handover_z_jitter}
+# arm0 receive position: offset from handover center, rotated with handover yaw so geometry stays consistent
+arm0_offset_vec = np.array([{arm0_x_offset}, {arm0_y_offset}, 0.0])
 
 # --- Pickup orientation ---
 gripper_down_quat = np.array([0, 1, 0, 0])
@@ -208,6 +286,13 @@ gripper_side_quat = gripper_side_matrix.wxyz
 # old one: gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, -0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
 gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, 0, 0.707, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
 gripper_rotated_side_quat = gripper_rotated_side_matrix.wxyz
+# Optional random yaw around world Z for handover (angle_rad=0 when not randomizing)
+handover_angle_rad = {handover_angle_rad}
+R_z = vtf.SO3.from_rpy_radians(0.0, 0.0, handover_angle_rad)
+# Rotate arm0 offset by same yaw so handover position + orientation stay consistent
+arm0_handover_pos = handover_pos + (R_z.as_matrix() @ arm0_offset_vec)
+arm1_handover_quat = (R_z @ vtf.SO3(wxyz=gripper_rotated_side_quat)).wxyz
+arm0_handover_quat = (R_z @ vtf.SO3(wxyz=gripper_side_quat)).wxyz
 
 # Arm1: pick up yellow tape
 open_gripper_arm1()
@@ -221,25 +306,23 @@ goto_pose_arm1(lifted, gripper_down_quat)
 above_pickup_at_handover_height = lifted.copy()
 above_pickup_at_handover_height[2] = get_arm_base_midpoint_z()
 
-goto_pose_arm1(above_pickup_at_handover_height, gripper_rotated_side_quat)
+goto_pose_arm1(above_pickup_at_handover_height, arm1_handover_quat)
 
 
 # Arm1: move to handover (shifted toward arm0)
-goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
+goto_pose_arm1(handover_pos, arm1_handover_quat)
 
 # Arm0 approach
-# arm0_quat = np.array([0.707, 0.707, 0, 0])
-arm0_quat = gripper_side_quat
 open_gripper_arm0()
-goto_pose_arm0(arm0_handover_pos, arm0_quat, z_approach=0.10)
+goto_pose_arm0(arm0_handover_pos, arm0_handover_quat, z_approach=0.10)
 close_gripper_arm0()
 
 # Arm1: release and retract
 open_gripper_arm1()
-shifted_handover_pos = handover_pos + vtf.SO3(wxyz=gripper_rotated_side_quat).as_matrix() @ np.array([0, 0, -0.1])
-shifted_arm0_pos = arm0_handover_pos + vtf.SO3(wxyz=arm0_quat).as_matrix() @ np.array([0, 0, -0.1])
-goto_pose_arm0(shifted_arm0_pos, arm0_quat)
-goto_pose_arm1(shifted_handover_pos, gripper_rotated_side_quat)
+shifted_handover_pos = handover_pos + vtf.SO3(wxyz=arm1_handover_quat).as_matrix() @ np.array([0, 0, -0.1])
+shifted_arm0_pos = arm0_handover_pos + vtf.SO3(wxyz=arm0_handover_quat).as_matrix() @ np.array([0, 0, -0.1])
+goto_pose_arm0(shifted_arm0_pos, arm0_handover_quat)
+goto_pose_arm1(shifted_handover_pos, arm1_handover_quat)
 goto_home_joint_position_arm1()
 # goto_home_joint_position_arm0()
 
@@ -324,8 +407,11 @@ goto_home_joint_position_arm0()
     obs, reward, terminated, truncated, info = exec_env.step(action_code)
     
     # 9. Create directory based on tape initialization information
-    # Directory name encodes the yellow and duct tape offsets
+    # Directory name encodes the yellow and duct tape offsets (and handover rand suffix if used)
     dir_name = f"handover_yellow_{yellow_offset_args[0]}_{yellow_offset_args[1]}_{yellow_offset_args[2]}_duct_{duct_offset_args[0]}_{duct_offset_args[1]}_{duct_offset_args[2]}".replace(".", "_").replace("-", "neg")
+    if use_handover_rand:
+        rand_suffix = rng_handover.integers(0, 1000000)
+        dir_name = f"{dir_name}_handover_rand_{rand_suffix}"
     dataset_dir = os.path.join("dataset", dir_name)
     os.makedirs(dataset_dir, exist_ok=True)
     print(f"Created directory: {dataset_dir}")
