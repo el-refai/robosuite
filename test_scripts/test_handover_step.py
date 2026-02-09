@@ -70,7 +70,7 @@ Examples:
         '--joint_state_fps',
         type=float,
         default=30.0,
-        help='Sampling rate for joint state collection in fps (default: 30.0)'
+        help='Sampling rate for joint state and video capture in fps; use same for both so #image = #proprio (default: 30.0). Increase to 60 or 120 for more frames.'
     )
     
     args = parser.parse_args()
@@ -119,12 +119,12 @@ Examples:
     obs, info = exec_env.reset()
 
     # 4. Enable video recording and joint state collection
-    # Convert fps to step frequency: simulation runs at ~500Hz, so steps_per_sample = 500 / fps
-    SIMULATION_FPS = 500.0  # Simulation timestep is 0.002s = 500Hz
-    joint_state_freq_steps = max(1, int(SIMULATION_FPS / args.joint_state_fps))
-    actual_fps = SIMULATION_FPS / joint_state_freq_steps
-    print(f"Enabling video capture and joint state collection (target: {args.joint_state_fps} fps, actual: {actual_fps:.2f} fps, every {joint_state_freq_steps} steps)...")
-    exec_env.enable_video_capture(True)
+    # Sample proprio (and video) every simulation frame so #image = #proprio at sim rate (~500 Hz).
+    # To downsample instead: joint_state_freq_steps = max(1, int(SIMULATION_FPS / args.joint_state_fps))
+    SIMULATION_FPS = 500.0  # From robosuite macros.SIMULATION_TIMESTEP = 0.002s
+    joint_state_freq_steps = 1
+    print(f"Enabling video and joint state (every simulation frame, ~{int(SIMULATION_FPS)} Hz)...")
+    exec_env.enable_video_capture(True, freq=joint_state_freq_steps)
     low_level_env.enable_joint_state_collection(True, clear=True, freq=joint_state_freq_steps)
 
     # --- Manually set object position (relative offset) ---

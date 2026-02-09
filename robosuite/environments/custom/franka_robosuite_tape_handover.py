@@ -531,8 +531,19 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
 
     # ------------------------- Video Capture -------------------------
 
-    def enable_video_capture(self, enabled: bool = True, *, clear: bool = True) -> None:
+    def enable_video_capture(self, enabled: bool = True, *, clear: bool = True, freq: int | None = None) -> None:
+        """Enable or disable video frame capture.
+
+        Args:
+            enabled: If True, enable capture.
+            clear: If True, clear existing frame buffers.
+            freq: Record a frame every N simulation steps (same semantics as joint state freq).
+                  If None, keeps current _subsample_rate (default 1 = every step).
+                  Use the same value as joint_state_collect_freq to align #image = #proprio.
+        """
         self._record_frames = enabled
+        if freq is not None:
+            self._subsample_rate = max(1, int(freq))
         if clear:
             self._frame_buffer.clear()
             self._camera_frame_buffers.clear()
