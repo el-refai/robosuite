@@ -1,6 +1,7 @@
 import pathlib
 import time
 from typing import Any
+import sys
 
 import numpy as np
 import open3d as o3d
@@ -238,6 +239,7 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
                     prev_cfg=self.cfg,
                 )
             joints_z_offset = np.asarray(self.cfg[:-1], dtype=np.float64).reshape(7)
+            print(f"joints from ik: {joints_z_offset.shape}")
             self._env.move_to_joints_blocking(joints_z_offset)
 
         if self.cfg is None:
