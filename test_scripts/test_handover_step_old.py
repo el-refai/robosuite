@@ -72,18 +72,7 @@ Examples:
         default=30.0,
         help='Sampling rate for joint state and video capture in fps; use same for both so #image = #proprio (default: 30.0). Increase to 60 or 120 for more frames.'
     )
-    parser.add_argument(
-        '--x_shift',
-        type=float,
-        default=0.0,
-        help='X shift for the handover position (default: 0.0)'
-    )
-    parser.add_argument(
-        '--y_shift',
-        type=float,
-        default=0.0,
-        help='Y shift for the handover position (default: 0.0)'
-    )
+    
     args = parser.parse_args()
     
     # Extract offsets as numpy arrays
@@ -91,13 +80,9 @@ Examples:
     duct_offset_args = args.duct_offset
     yellow_offset = np.array(yellow_offset_args)
     duct_offset = np.array(duct_offset_args)
-
-    x_shift = float(args.x_shift)
-    y_shift = float(args.y_shift)
     
     print(f"Yellow tape offset: {yellow_offset_args}")
     print(f"Duct tape offset: {duct_offset_args}")
-    print(f"Handover position shifts: x_shift={x_shift}, y_shift={y_shift}")
     
     # Register the API so CodeExecutionEnvBase can find it
     # The name here is used by CodeExecutionEnvBase to look up the API
@@ -207,8 +192,8 @@ duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
 arm1_pos, _ = get_arm1_gripper_pose()
 arm0_pos, _ = get_arm0_gripper_pose()
 handover_pos = (arm1_pos + arm0_pos) / 2
-handover_pos[0] -= 0.15 + {x_shift} # shift the handover position back by 15cm to make it more reachable
-handover_pos[1] += 0.1 + {y_shift} # shift the handover position left by 10cm to make it more reachable
+handover_pos[0] -= 0.15 # shift the handover position back by 15cm to make it more reachable
+handover_pos[1] += 0.1 # shift the handover position left by 10cm to make it more reachable
 arm0_handover_pos = handover_pos.copy()
 # Need a way to get the width of the yellow tape that isnt privileged
 # this is half the width of the franka gripper:
