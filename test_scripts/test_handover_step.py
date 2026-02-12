@@ -84,6 +84,12 @@ Examples:
         default=0.0,
         help='Y shift for the handover position (default: 0.0)'
     )
+    parser.add_argument(
+        '--angle_shift',
+        type=float,
+        default=0.0,
+        help='Angle (z-axis) shift for the handover position in radians (default: 0.0)'
+    )
     args = parser.parse_args()
     
     # Extract offsets as numpy arrays
@@ -94,10 +100,11 @@ Examples:
 
     x_shift = float(args.x_shift)
     y_shift = float(args.y_shift)
+    angle_shift = float(args.angle_shift)
     
     print(f"Yellow tape offset: {yellow_offset_args}")
     print(f"Duct tape offset: {duct_offset_args}")
-    print(f"Handover position shifts: x_shift={x_shift}, y_shift={y_shift}")
+    print(f"Handover position shifts: x_shift={x_shift}, y_shift={y_shift}, angle_shift={angle_shift}")
     
     # Register the API so CodeExecutionEnvBase can find it
     # The name here is used by CodeExecutionEnvBase to look up the API
@@ -206,22 +213,26 @@ duct_tape_pos, duct_tape_quat = get_object_pose("duct tape")
 
 arm1_pos, _ = get_arm1_gripper_pose()
 arm0_pos, _ = get_arm0_gripper_pose()
-handover_pos = (arm1_pos + arm0_pos) / 2
-handover_pos[0] -= 0.15 + {x_shift} # shift the handover position back by 15cm to make it more reachable
-handover_pos[1] += 0.1 + {y_shift} # shift the handover position left by 10cm to make it more reachable
-arm0_handover_pos = handover_pos.copy()
-# Need a way to get the width of the yellow tape that isnt privileged
-# this is half the width of the franka gripper:
-arm0_handover_pos[1] -= 0.1025 # shift handover position right by half the width of the franka gripper
-arm0_handover_pos[0] += 0.035 # shift handover position forward by 2cm
+center = (arm1_pos + arm0_pos) / 2
+# Z-axis rotation for angle_shift (radians): handover position and offsets are rotated around center
+angle_shift = {angle_shift}
+Rz_quat = np.array([np.cos(angle_shift / 2), 0, 0, np.sin(angle_shift / 2)])  # wxyz
+Rz = vtf.SO3(wxyz=Rz_quat).as_matrix()
+# Translation offset from center (then rotated by angle_shift)
+handover_offset = np.array([-0.15 - {x_shift}, 0.1 + {y_shift}, 0.0])
+handover_pos = center + Rz @ handover_offset
+# Arm0 handover offset (0.035, -0.1025, 0) applied in the rotated frame so it stays consistent
+arm0_offset = np.array([0.035, -0.1025, 0.0])
+arm0_handover_pos = handover_pos + Rz @ arm0_offset
 
 # --- Pickup orientation ---
 gripper_down_quat = np.array([0, 1, 0, 0])
-# old one: gripper_side_matrix = vtf.SO3(wxyz=[0.707, 0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+# Base side orientations; then rotate by angle_shift around z so approach aligns with rotated handover
 gripper_side_matrix = vtf.SO3(wxyz=[0.707, 0, -0.707, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
-gripper_side_quat = gripper_side_matrix.wxyz
-# old one: gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, -0.707, 0, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
 gripper_rotated_side_matrix = vtf.SO3(wxyz=[0.707, 0, 0.707, 0]) @ vtf.SO3(wxyz=[0, 1, 0, 0])
+gripper_side_matrix = vtf.SO3(wxyz=Rz_quat) @ gripper_side_matrix
+gripper_rotated_side_matrix = vtf.SO3(wxyz=Rz_quat) @ gripper_rotated_side_matrix
+gripper_side_quat = gripper_side_matrix.wxyz
 gripper_rotated_side_quat = gripper_rotated_side_matrix.wxyz
 
 # Arm1: pick up yellow tape
