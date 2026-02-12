@@ -37,8 +37,10 @@ class RobotEnv(MujocoEnv):
             :`'magnitude'`: The scale factor of uni-variate random noise applied to each of a robot's given initial
                 joint positions. Setting this value to `None` or 0.0 results in no noise being applied.
                 If "gaussian" type of noise is applied then this magnitude scales the standard deviation applied,
-                If "uniform" type of noise is applied then this magnitude sets the bounds of the sampling range
-            :`'type'`: Type of noise to apply. Can either specify "gaussian" or "uniform"
+                If "uniform" type of noise is applied then this magnitude sets the bounds of the sampling range,
+                If "sphere" type is applied then this magnitude is the radius R (meters) of the sphere around the
+                initial gripper position; a pose inside the sphere is sampled and IK yields initial joint angles.
+            :`'type'`: Type of noise to apply. Can be "gaussian", "uniform", or "sphere"
 
             Should either be single dict if same noise value is to be used for all robots or else it should be a
             list of the same length as "robots" param

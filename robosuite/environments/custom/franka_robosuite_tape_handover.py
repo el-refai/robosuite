@@ -92,6 +92,7 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                 use_camera_obs=True,  # Required for camera observations
                 yellow_tape_offset=yellow_tape_offset,
                 duct_tape_offset=duct_tape_offset,
+                initialization_noise={"type": "sphere", "magnitude": 0.1}
             )
             # Get camera ID and modify its position and orientation
             agentview_cam_id = self.robosuite_env.sim.model.camera_name2id("agentview")
@@ -221,7 +222,11 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
 
             # Build Robosuite action for both robots
             # Each robot action = [7 joints, 1 gripper] = 8 dims
-            robot0_action = np.concatenate([target, [1.0 - self._gripper_fraction_0 * 2.0]])
+            if error > 10 * tolerance:
+                perturbed_target = target + self._rng.normal(0, 0.005, target.shape)
+            else:
+                perturbed_target = target
+            robot0_action = np.concatenate([perturbed_target, [1.0 - self._gripper_fraction_0 * 2.0]])
             robot1_action = np.concatenate([robot1_joints, [1.0 - self._gripper_fraction_1 * 2.0]])
             action = np.concatenate([robot0_action, robot1_action])
 
@@ -265,10 +270,13 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             error = np.linalg.norm(current - target)
             if error < tolerance:
                 break
-
             # Build Robosuite action for both robots
+            if error > 10 * tolerance:
+                perturbed_target = target + self._rng.normal(0, 0.005, target.shape)
+            else:
+                perturbed_target = target
             robot0_action = np.concatenate([robot0_joints, [1.0 - self._gripper_fraction_0 * 2.0]])
-            robot1_action = np.concatenate([target, [1.0 - self._gripper_fraction_1 * 2.0]])
+            robot1_action = np.concatenate([perturbed_target, [1.0 - self._gripper_fraction_1 * 2.0]])
             action = np.concatenate([robot0_action, robot1_action])
 
             # Step the environment
