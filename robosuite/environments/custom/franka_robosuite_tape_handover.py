@@ -92,6 +92,7 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                 use_camera_obs=True,  # Required for camera observations
                 yellow_tape_offset=yellow_tape_offset,
                 duct_tape_offset=duct_tape_offset,
+                initialization_noise={"type": "sphere", "magnitude": 0.1}
             )
             # Get camera ID and modify its position and orientation
             agentview_cam_id = self.robosuite_env.sim.model.camera_name2id("agentview")

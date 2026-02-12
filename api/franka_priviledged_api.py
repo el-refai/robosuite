@@ -220,16 +220,43 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         rot = SciRotation.from_quat(quat_xyzw)
         offset_pos = pos + rot.apply(self._TCP_OFFSET)
 
+        # Get current joint state for arm0 to use as initial configuration if cfg is None
+        initial_cfg = None
+        if self.cfg is None:
+            obs = self._env.get_observation()
+            if "robot0_joint_pos" in obs:
+                current_joints = np.asarray(obs["robot0_joint_pos"], dtype=np.float64)
+                # Use only the 7 arm joints (no gripper) as initial configuration
+                # The IK solver expects shape (robot.joints.num_actuated_joints,) which is 7
+                initial_cfg = current_joints[:7] if len(current_joints) >= 7 else current_joints
+
         if z_approach != 0.0:
             z_offset_pos = offset_pos + rot.apply(np.array([0, 0, -z_approach]))
 
             if self.cfg is None:
-                self.cfg = self._pks.solve_ik(
-                    robot=self._robot,
-                    target_link_name=self._target_link_name,
-                    target_position=z_offset_pos,
-                    target_wxyz=quat_wxyz,
-                )
+                try:
+                    self.cfg = self._pks.solve_ik(
+                        robot=self._robot,
+                        target_link_name=self._target_link_name,
+                        target_position=z_offset_pos,
+                        target_wxyz=quat_wxyz,
+                        initial_cfg=initial_cfg,
+                    )
+                except Exception as e:
+                    # Fallback: try without initial config if it fails
+                    if initial_cfg is not None:
+                        try:
+                            self.cfg = self._pks.solve_ik(
+                                robot=self._robot,
+                                target_link_name=self._target_link_name,
+                                target_position=z_offset_pos,
+                                target_wxyz=quat_wxyz,
+                                initial_cfg=None,
+                            )
+                        except Exception:
+                            raise RuntimeError(f"IK solving failed for arm0: {e}")
+                    else:
+                        raise RuntimeError(f"IK solving failed for arm0: {e}")
             else:
                 self.cfg = self._pks.solve_ik_vel_cost(
                     robot=self._robot,
@@ -243,12 +270,29 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             self._env.move_to_joints_blocking(joints_z_offset)
 
         if self.cfg is None:
-            self.cfg = self._pks.solve_ik(
-                robot=self._robot,
-                target_link_name=self._target_link_name,
-                target_position=offset_pos,
-                target_wxyz=quat_wxyz,
-            )
+            try:
+                self.cfg = self._pks.solve_ik(
+                    robot=self._robot,
+                    target_link_name=self._target_link_name,
+                    target_position=offset_pos,
+                    target_wxyz=quat_wxyz,
+                    initial_cfg=initial_cfg,
+                )
+            except Exception as e:
+                # Fallback: try without initial config if it fails
+                if initial_cfg is not None:
+                    try:
+                        self.cfg = self._pks.solve_ik(
+                            robot=self._robot,
+                            target_link_name=self._target_link_name,
+                            target_position=offset_pos,
+                            target_wxyz=quat_wxyz,
+                            initial_cfg=None,
+                        )
+                    except Exception:
+                        raise RuntimeError(f"IK solving failed for arm0: {e}")
+                else:
+                    raise RuntimeError(f"IK solving failed for arm0: {e}")
         else:
             self.cfg = self._pks.solve_ik_vel_cost(
                 robot=self._robot,
@@ -301,16 +345,43 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         rot = SciRotation.from_quat(quat_xyzw)
         offset_pos = pos + rot.apply(self._TCP_OFFSET)
 
+        # Get current joint state for arm1 to use as initial configuration if cfg_1 is None
+        initial_cfg = None
+        if self.cfg_1 is None:
+            obs = self._env.get_observation()
+            if "robot1_joint_pos" in obs:
+                current_joints = np.asarray(obs["robot1_joint_pos"], dtype=np.float64)
+                # Use only the 7 arm joints (no gripper) as initial configuration
+                # The IK solver expects shape (robot.joints.num_actuated_joints,) which is 7
+                initial_cfg = current_joints[:7] if len(current_joints) >= 7 else current_joints
+
         if z_approach != 0.0:
             z_offset_pos = offset_pos + rot.apply(np.array([0, 0, -z_approach]))
 
             if self.cfg_1 is None:
-                self.cfg_1 = self._pks.solve_ik(
-                    robot=self._robot,
-                    target_link_name=self._target_link_name,
-                    target_position=z_offset_pos,
-                    target_wxyz=quat_wxyz,
-                )
+                try:
+                    self.cfg_1 = self._pks.solve_ik(
+                        robot=self._robot,
+                        target_link_name=self._target_link_name,
+                        target_position=z_offset_pos,
+                        target_wxyz=quat_wxyz,
+                        initial_cfg=initial_cfg,
+                    )
+                except Exception as e:
+                    # Fallback: try without initial config if it fails
+                    if initial_cfg is not None:
+                        try:
+                            self.cfg_1 = self._pks.solve_ik(
+                                robot=self._robot,
+                                target_link_name=self._target_link_name,
+                                target_position=z_offset_pos,
+                                target_wxyz=quat_wxyz,
+                                initial_cfg=None,
+                            )
+                        except Exception:
+                            raise RuntimeError(f"IK solving failed for arm1: {e}")
+                    else:
+                        raise RuntimeError(f"IK solving failed for arm1: {e}")
             else:
                 self.cfg_1 = self._pks.solve_ik_vel_cost(
                     robot=self._robot,
@@ -323,12 +394,29 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             self._env.move_to_joints_blocking_arm1(joints_z_offset)
 
         if self.cfg_1 is None:
-            self.cfg_1 = self._pks.solve_ik(
-                robot=self._robot,
-                target_link_name=self._target_link_name,
-                target_position=offset_pos,
-                target_wxyz=quat_wxyz,
-            )
+            try:
+                self.cfg_1 = self._pks.solve_ik(
+                    robot=self._robot,
+                    target_link_name=self._target_link_name,
+                    target_position=offset_pos,
+                    target_wxyz=quat_wxyz,
+                    initial_cfg=initial_cfg,
+                )
+            except Exception as e:
+                # Fallback: try without initial config if it fails
+                if initial_cfg is not None:
+                    try:
+                        self.cfg_1 = self._pks.solve_ik(
+                            robot=self._robot,
+                            target_link_name=self._target_link_name,
+                            target_position=offset_pos,
+                            target_wxyz=quat_wxyz,
+                            initial_cfg=None,
+                        )
+                    except Exception:
+                        raise RuntimeError(f"IK solving failed for arm1: {e}")
+                else:
+                    raise RuntimeError(f"IK solving failed for arm1: {e}")
         else:
             self.cfg_1 = self._pks.solve_ik_vel_cost(
                 robot=self._robot,
