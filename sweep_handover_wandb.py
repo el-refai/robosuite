@@ -1,5 +1,6 @@
 import subprocess
 import os
+import random
 import wandb
 import imageio
 import sys
@@ -56,14 +57,23 @@ EXCLUDED_YELLOW_POSITION = (ROW_CENTERS[0], YELLOW_COLS[2])  # (-0.28, 0.325)
 # Duct at (-0.28, -0.325) - extreme corner  
 EXCLUDED_DUCT_POSITION = (ROW_CENTERS[0], DUCT_COLS[0])  # (-0.28, -0.325)
 
+# Random shift ranges for handover position (applied per trajectory)
+# x_shift, y_shift in meters; angle_shift in radians
+X_SHIFT_RANGE = (-0.01, 0.01)    # meters
+Y_SHIFT_RANGE = (-0.01, 0.01)    # meters
+ANGLE_SHIFT_RANGE = (-0.0, 0.05)  # radians (~±2.9°)
 
-def get_dir_name(yellow_offset_str, duct_offset_str):
-    """Replicate the directory naming logic in test_handover_step.py"""
+
+def get_dir_name(yellow_offset_str, duct_offset_str, x_shift=None, y_shift=None, angle_shift=None):
+    """Replicate the directory naming logic in test_handover_step.py.
+    When x_shift, y_shift, angle_shift are provided, appends _x_..._y_..._angle_... to match the test script."""
     y_vals = [float(x.strip()) for x in yellow_offset_str.split(',')]
     d_vals = [float(x.strip()) for x in duct_offset_str.split(',')]
     
-    dir_name = f"handover_yellow_{y_vals[0]}_{y_vals[1]}_{y_vals[2]}_duct_{d_vals[0]}_{d_vals[1]}_{d_vals[2]}"
-    return dir_name.replace(".", "_").replace("-", "neg")
+    base = f"handover_yellow_{y_vals[0]}_{y_vals[1]}_{y_vals[2]}_duct_{d_vals[0]}_{d_vals[1]}_{d_vals[2]}"
+    if x_shift is not None and y_shift is not None and angle_shift is not None:
+        base = f"{base}_x_{x_shift}_y_{y_shift}_angle_{angle_shift}"
+    return base.replace(".", "_").replace("-", "neg")
 
 
 def generate_valid_combinations():
@@ -122,23 +132,32 @@ def create_sweep_config(project_name):
 
 
 def run_single_combination(combo_idx, combinations):
-    """Run a single position combination."""
+    """Run a single position combination with random x_shift, y_shift, angle_shift."""
     combo = combinations[combo_idx]
     yellow_offset = combo["yellow_offset"]
     duct_offset = combo["duct_offset"]
     combo_id = combo["combo_id"]
-    
+
+    # Randomly sample handover position shifts from configured ranges
+    x_shift = random.uniform(*X_SHIFT_RANGE)
+    y_shift = random.uniform(*Y_SHIFT_RANGE)
+    angle_shift = random.uniform(*ANGLE_SHIFT_RANGE)
+
     print(f"Running combination {combo_idx + 1}/{len(combinations)}")
     print(f"  Yellow tape offset: [{yellow_offset}]")
     print(f"  Duct tape offset:   [{duct_offset}]")
-    
+    print(f"  Shifts: x_shift={x_shift:.4f}, y_shift={y_shift:.4f}, angle_shift={angle_shift:.4f} rad")
+
     # Run the simulation
     cmd = [
         "venv/bin/python", "test_scripts/test_handover_step.py",
         f"--yellow_offset={yellow_offset}",
-        f"--duct_offset={duct_offset}"
+        f"--duct_offset={duct_offset}",
+        f"--x_shift={x_shift}",
+        f"--y_shift={y_shift}",
+        f"--angle_shift={angle_shift}",
     ]
-    
+
     process = subprocess.run(cmd)
     exit_code = process.returncode
     success = exit_code == 0
@@ -160,10 +179,14 @@ def run_single_combination(combo_idx, combinations):
         "yellow_y": combo["yellow_y"],
         "duct_x": combo["duct_x"],
         "duct_y": combo["duct_y"],
+        "x_shift": x_shift,
+        "y_shift": y_shift,
+        "angle_shift": angle_shift,
     }
-    
-    # Path to the saved video
-    dataset_dir = os.path.join("dataset", combo_id)
+
+    # Path to the saved video (test_handover_step uses dir name that includes shifts)
+    combo_id_with_shifts = get_dir_name(yellow_offset, duct_offset, x_shift, y_shift, angle_shift)
+    dataset_dir = os.path.join("dataset", combo_id_with_shifts)
     video_path = os.path.join(dataset_dir, "handover_agentview.mp4")
     
     # Extract last frame and video length if video exists
@@ -262,8 +285,23 @@ def main():
                         help="Maximum number of runs for this agent")
     parser.add_argument("--list-combinations", action="store_true",
                         help="List all valid combinations and exit")
-    
+    parser.add_argument("--x-shift-range", type=float, nargs=2, default=None,
+                        help="Min and max x_shift in meters (default: -0.02 0.02)")
+    parser.add_argument("--y-shift-range", type=float, nargs=2, default=None,
+                        help="Min and max y_shift in meters (default: -0.02 0.02)")
+    parser.add_argument("--angle-shift-range", type=float, nargs=2, default=None,
+                        help="Min and max angle_shift in radians (default: 0 0.1)")
+
     args = parser.parse_args()
+
+    # Override shift ranges from CLI
+    global X_SHIFT_RANGE, Y_SHIFT_RANGE, ANGLE_SHIFT_RANGE
+    if args.x_shift_range is not None:
+        X_SHIFT_RANGE = tuple(args.x_shift_range)
+    if args.y_shift_range is not None:
+        Y_SHIFT_RANGE = tuple(args.y_shift_range)
+    if args.angle_shift_range is not None:
+        ANGLE_SHIFT_RANGE = tuple(args.angle_shift_range)
     
     # Generate project name with timestamp if not specified
     if args.project is None:

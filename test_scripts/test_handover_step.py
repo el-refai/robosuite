@@ -351,7 +351,7 @@ goto_home_joint_position_arm0()
     
     # 9. Create directory based on tape initialization information
     # Directory name encodes the yellow and duct tape offsets
-    dir_name = f"handover_yellow_{yellow_offset_args[0]}_{yellow_offset_args[1]}_{yellow_offset_args[2]}_duct_{duct_offset_args[0]}_{duct_offset_args[1]}_{duct_offset_args[2]}".replace(".", "_").replace("-", "neg")
+    dir_name = f"handover_yellow_{yellow_offset_args[0]}_{yellow_offset_args[1]}_{yellow_offset_args[2]}_duct_{duct_offset_args[0]}_{duct_offset_args[1]}_{duct_offset_args[2]}_x_{x_shift}_y_{y_shift}_angle_{angle_shift}".replace(".", "_").replace("-", "neg")
     dataset_dir = os.path.join("dataset", dir_name)
     os.makedirs(dataset_dir, exist_ok=True)
     print(f"Created directory: {dataset_dir}")
