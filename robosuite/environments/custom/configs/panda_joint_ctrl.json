@@ -6,18 +6,21 @@
                 "type": "JOINT_POSITION",
                 "input_max": 10,
                 "input_min": -10,
-                "output_max": 1.0,
-                "output_min": -1.0,
-                "kd": 400,
+                "output_max": 10.0,
+                "output_min": -10.0,
+                "kd": 1000,
                 "kv": 200,
-                "kp": 1500,
-                "velocity_limits": [-5,5],
-                "kp_limits": [0, 1000],
-                "interpolation": null,
-                "ramp_ratio": 0.2,
+                "kp": 10000,
+                "velocity_limits": [-15, 15],
+                "kp_limits": [0, 30000],
+                "interpolation": "linear",
+                "ramp_ratio": 1.0,
                 "input_type": "absolute",
                 "gripper": {
-                    "type": "GRIP"
+                    "type": "GRIP",
+                    "kp": 30000,
+                    "kd":1000,
+                    "velocity_limits": [-15, 15]
                 }
             }
         }
