@@ -32,6 +32,12 @@ def parse_args():
         help="One or more dataset directories (each with agentview, robot0_wrist, robot1_wrist mp4s and robot0/robot1_joints npz).",
     )
     parser.add_argument(
+        "--all",
+        "-a",
+        action="store_true",
+        help="If a path is a directory, expand to all its immediate subdirectories (process all trajectories in that folder).",
+    )
+    parser.add_argument(
         "--threshold",
         "-t",
         type=float,
@@ -188,6 +194,7 @@ def process_dataset(
     in_place: bool,
     backup: bool,
     dry_run: bool,
+    output_subdir: Path | None = None,
 ) -> bool:
     """Process a single dataset directory. Returns True on success."""
     dataset_dir = dataset_dir.resolve()
@@ -195,11 +202,12 @@ def process_dataset(
         print(f"Skip (not a directory): {dataset_dir}", file=sys.stderr)
         return False
 
-    # Output: same dir when in-place, else output_dir / dataset_dir.name
+    # Output: same dir when in-place, else output_dir / (output_subdir or dataset_dir.name)
     if in_place:
         out_dir = dataset_dir
     else:
-        out_dir = output_dir.resolve() / dataset_dir.name
+        name = output_subdir if output_subdir is not None else dataset_dir.name
+        out_dir = output_dir.resolve() / name
         out_dir.mkdir(parents=True, exist_ok=True)
 
     agentview_path = dataset_dir / f"{base_filename}_agentview.mp4"
@@ -303,12 +311,42 @@ def process_dataset(
     return True
 
 
+def expand_dirs(
+    dirs: list[Path], expand_all: bool
+) -> list[tuple[Path, Path | None]]:
+    """
+    If expand_all, replace directory args with their subdirectories.
+    Returns list of (dataset_path, output_subdir_override).
+    output_subdir_override: when set, used instead of dataset_dir.name for output path
+    (e.g. parent_name / subdir_name to preserve structure).
+    """
+    if not expand_all:
+        return [(p.resolve(), None) for p in dirs]
+    out: list[tuple[Path, Path | None]] = []
+    for p in dirs:
+        p = p.resolve()
+        if p.is_dir():
+            subdirs = sorted(d for d in p.iterdir() if d.is_dir())
+            if not subdirs:
+                out.append((p, None))
+            else:
+                for sub in subdirs:
+                    # Preserve structure: output_dir/parent_name/subdir_name
+                    out.append((sub, Path(p.name) / sub.name))
+        else:
+            out.append((p, None))
+    return out
+
+
 def main():
     args = parse_args()
+    expanded = expand_dirs(args.dataset_dirs, args.all)
+    if args.all and len(expanded) > len(args.dataset_dirs):
+        print(f"Processing {len(expanded)} trajectories.\n")
     output_dir = None if args.in_place else args.output_dir
-    for d in args.dataset_dirs:
+    for dataset_path, out_subdir_override in expanded:
         process_dataset(
-            d,
+            dataset_path,
             base_filename=args.base_filename,
             threshold=args.threshold,
             diff_metric=args.diff_metric,
@@ -316,6 +354,7 @@ def main():
             in_place=args.in_place,
             backup=args.backup,
             dry_run=args.dry_run,
+            output_subdir=out_subdir_override,
         )
     print("\nDone.")
 

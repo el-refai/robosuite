@@ -19,6 +19,17 @@ from robosuite.utils.mjcf_utils import array_to_string
 from robosuite.utils.observables import Observable, sensor
 
 
+def _sample_point_in_sphere(center, radius, rng):
+    """Sample a point uniformly inside a sphere of given radius around center."""
+    if radius <= 0:
+        return np.array(center, dtype=np.float64)
+    # Uniform sampling in ball: r^3 ~ Uniform(0, R^3) and random direction
+    r = radius * (rng.uniform(0, 1) ** (1.0 / 3.0))
+    direction = rng.standard_normal(3)
+    direction /= np.linalg.norm(direction)
+    return center + r * direction
+
+
 class Robot(object):
     """
     Initializes a robot simulation object, as defined by a single corresponding robot XML
@@ -37,8 +48,10 @@ class Robot(object):
             :`'magnitude'`: The scale factor of uni-variate random noise applied to each of a robot's given initial
                 joint positions. Setting this value to "None" or 0.0 results in no noise being applied.
                 If "gaussian" type of noise is applied then this magnitude scales the standard deviation applied,
-                If "uniform" type of noise is applied then this magnitude sets the bounds of the sampling range
-            :`'type'`: Type of noise to apply. Can either specify "gaussian" or "uniform"
+                If "uniform" type of noise is applied then this magnitude sets the bounds of the sampling range,
+                If "sphere" type is applied then this magnitude is the radius R of the sphere (in meters) around the
+                initial gripper position; a pose inside the sphere is sampled and IK is used to find initial joint angles.
+            :`'type'`: Type of noise to apply. Can be "gaussian", "uniform", or "sphere"
 
             :Note: Specifying None will automatically create the required dict with "magnitude" set to 0.0
 
@@ -231,6 +244,54 @@ class Robot(object):
         """
         self.sim = sim
 
+    def _solve_position_ik_for_arm(self, arm, qpos, target_pos, rng, max_iter=80, tol=1e-4, step=0.4, damping=1e-2):
+        """
+        Solve for joint positions that place the arm's EEF at target_pos (position-only IK).
+        Uses damped least-squares Jacobian iteration. Returns updated qpos for this robot.
+        """
+        (start, end) = (None, self._joint_split_idx) if arm == "right" else (self._joint_split_idx, None)
+        vel_indexes = self._ref_joint_vel_indexes[start:end]
+        q = np.array(qpos)
+        low = self.sim.model.actuator_ctrlrange[self._ref_arm_joint_actuator_indexes[start:end], 0]
+        high = self.sim.model.actuator_ctrlrange[self._ref_arm_joint_actuator_indexes[start:end], 1]
+
+        for _ in range(max_iter):
+            self.sim.data.qpos[self._ref_joint_pos_indexes] = q
+            self.sim.forward()
+            current = self.sim.data.site_xpos[self.eef_site_id[arm]].copy()
+            err = target_pos - current
+            if np.linalg.norm(err) < tol:
+                break
+            Jp = self.sim.data.get_body_jacp(self.robot_model.eef_name[arm]).reshape((3, -1))
+            Jp_arm = Jp[:, vel_indexes]
+            JJt = Jp_arm @ Jp_arm.T + damping * np.eye(3)
+            dq = Jp_arm.T @ np.linalg.solve(JJt, err)
+            q[start:end] = q[start:end] + step * dq
+            q[start:end] = np.clip(q[start:end], low, high)
+
+        return q
+
+    def _sample_init_qpos_in_sphere(self, init_qpos, radius, rng):
+        """
+        Sample a gripper pose inside a sphere of given radius around the initial EEF position,
+        then solve position-only IK to get initial joint positions. Applied per arm.
+        """
+        # Set sim to init_qpos so we can read EEF position
+        self.sim.data.qpos[self._ref_joint_pos_indexes] = init_qpos
+        if self.robot_model.init_base_qpos is not None:
+            self.sim.data.qpos[self._ref_base_joint_pos_indexes] = self.robot_model.init_base_qpos
+        init_torso_qpos = self.init_torso_qpos if self.init_torso_qpos is not None else self.robot_model.init_torso_qpos
+        if init_torso_qpos is not None:
+            self.sim.data.qpos[self._ref_torso_joint_pos_indexes] = init_torso_qpos
+        self.sim.forward()
+
+        qpos = np.array(init_qpos)
+        for arm in self.arms:
+            eef_pos = self.sim.data.site_xpos[self.eef_site_id[arm]].copy()
+            target_pos = _sample_point_in_sphere(eef_pos, radius, rng)
+            qpos = self._solve_position_ik_for_arm(arm, qpos, target_pos, rng)
+        return qpos
+
     def reset(self, deterministic=False, rng=None):
         """
         Sets initial pose of arm and grippers. Overrides robot joint configuration if we're using a
@@ -246,14 +307,22 @@ class Robot(object):
             rng = np.random.default_rng()
         init_qpos = np.array(self.init_qpos)
         if not deterministic:
-            # Determine noise
-            if self.initialization_noise["type"] == "gaussian":
+            # Determine noise or task-space sphere sampling
+            noise_type = self.initialization_noise["type"]
+            if noise_type == "gaussian":
                 noise = rng.standard_normal(len(self.init_qpos)) * self.initialization_noise["magnitude"]
-            elif self.initialization_noise["type"] == "uniform":
+                init_qpos += noise
+            elif noise_type == "uniform":
                 noise = rng.uniform(-1.0, 1.0, len(self.init_qpos)) * self.initialization_noise["magnitude"]
+                init_qpos += noise
+            elif noise_type == "sphere":
+                R = self.initialization_noise["magnitude"]
+                if R > 0:
+                    init_qpos = self._sample_init_qpos_in_sphere(init_qpos, R, rng)
             else:
-                raise ValueError("Error: Invalid noise type specified. Options are 'gaussian' or 'uniform'.")
-            init_qpos += noise
+                raise ValueError(
+                    "Error: Invalid noise type specified. Options are 'gaussian', 'uniform', or 'sphere'."
+                )
 
         # Set initial position in sim
         self.sim.data.qpos[self._ref_joint_pos_indexes] = init_qpos

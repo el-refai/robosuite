@@ -298,8 +298,8 @@ class CodeExecutionEnvBase(Env):
         return self.low_level_env.render(mode=mode)
 
     # Video passthrough for demo compatibility
-    def enable_video_capture(self, enabled: bool = True, *, clear: bool = True) -> None:
-        self.low_level_env.enable_video_capture(enabled, clear=clear)
+    def enable_video_capture(self, enabled: bool = True, *, clear: bool = True, freq: int | None = None) -> None:
+        self.low_level_env.enable_video_capture(enabled, clear=clear, freq=freq)
 
     def get_video_frames(self, *, clear: bool = False) -> list[np.ndarray]:
         return self.low_level_env.get_video_frames(clear=clear)
