@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+from datetime import datetime
 import numpy as np
 import imageio
 from collections import OrderedDict
@@ -90,6 +91,18 @@ Examples:
         default=0.0,
         help='Angle (z-axis) shift for the handover position in radians (default: 0.0)'
     )
+    parser.add_argument(
+        '--perturb_radius',
+        type=float,
+        default=0.02,
+        help='Radius (m) of sphere for sampling perturbed waypoint before handover; 0 to disable (default: 0.02)'
+    )
+    parser.add_argument(
+        '--perturb_sphere_offset',
+        type=parse_offset_list,
+        default='0.0,0.0,0.0',
+        help='Translation offset (x,y,z) of sphere center from handover_pos, in rotated frame (default: 0,0,0)'
+    )
     args = parser.parse_args()
     
     # Extract offsets as numpy arrays
@@ -101,10 +114,14 @@ Examples:
     x_shift = float(args.x_shift)
     y_shift = float(args.y_shift)
     angle_shift = float(args.angle_shift)
-    
+    perturb_radius = float(args.perturb_radius)
+    perturb_sphere_offset = np.array(args.perturb_sphere_offset)
+
     print(f"Yellow tape offset: {yellow_offset_args}")
     print(f"Duct tape offset: {duct_offset_args}")
     print(f"Handover position shifts: x_shift={x_shift}, y_shift={y_shift}, angle_shift={angle_shift}")
+    print(f"Perturbation sphere radius: {perturb_radius} m" + (" (disabled)" if perturb_radius <= 0 else ""))
+    print(f"Perturbation sphere center offset: {perturb_sphere_offset}")
     
     # Register the API so CodeExecutionEnvBase can find it
     # The name here is used by CodeExecutionEnvBase to look up the API
@@ -249,6 +266,15 @@ above_pickup_at_handover_height[2] = get_arm_base_midpoint_z()
 
 goto_pose_arm1(above_pickup_at_handover_height, gripper_rotated_side_quat)
 
+# Waypoint sampled from sphere (center offset from handover_pos) for perturbation-correction data
+perturb_radius = {perturb_radius}
+perturb_sphere_offset = np.array({perturb_sphere_offset.tolist()})
+if perturb_radius > 0:
+    sphere_center = handover_pos + Rz @ perturb_sphere_offset
+    unit = np.random.randn(3)
+    unit = unit / np.linalg.norm(unit)
+    perturbed_waypoint = sphere_center + perturb_radius * unit
+    goto_pose_arm1(perturbed_waypoint, gripper_rotated_side_quat)
 
 # Arm1: move to handover (shifted toward arm0)
 goto_pose_arm1(handover_pos, gripper_rotated_side_quat)
@@ -351,7 +377,8 @@ goto_home_joint_position_arm0()
     
     # 9. Create directory based on tape initialization information
     # Directory name encodes the yellow and duct tape offsets
-    dir_name = f"handover_yellow_{yellow_offset_args[0]}_{yellow_offset_args[1]}_{yellow_offset_args[2]}_duct_{duct_offset_args[0]}_{duct_offset_args[1]}_{duct_offset_args[2]}_x_{x_shift}_y_{y_shift}_angle_{angle_shift}".replace(".", "_").replace("-", "neg")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dir_name = f"handover_yellow_{yellow_offset_args[0]}_{yellow_offset_args[1]}_{yellow_offset_args[2]}_duct_{duct_offset_args[0]}_{duct_offset_args[1]}_{duct_offset_args[2]}_x_{x_shift}_y_{y_shift}_angle_{angle_shift}_{timestamp}".replace(".", "_").replace("-", "neg")
     dataset_dir = os.path.join("dataset", dir_name)
     os.makedirs(dataset_dir, exist_ok=True)
     print(f"Created directory: {dataset_dir}")
