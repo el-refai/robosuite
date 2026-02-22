@@ -32,6 +32,7 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
     def __init__(
         self,
         controller_cfg: str = "robosuite/environments/custom/configs/panda_joint_ctrl.json",
+        control_freq:float = 20,
         max_steps: int = 5000,
         seed: int | None = None,
         viser_debug: bool = False,  # TODO: move the viser visualization manager into a separate class, low level env agnostic
@@ -92,7 +93,8 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                 use_camera_obs=True,  # Required for camera observations
                 yellow_tape_offset=yellow_tape_offset,
                 duct_tape_offset=duct_tape_offset,
-                initialization_noise={"type": "sphere", "magnitude": 0.1}
+                control_freq=control_freq,
+                initialization_noise={"type": "sphere", "magnitude": 0.02},
             )
             # Get camera ID and modify its position and orientation
             agentview_cam_id = self.robosuite_env.sim.model.camera_name2id("agentview")
