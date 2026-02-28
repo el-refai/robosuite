@@ -8,13 +8,13 @@ hot-swappable for code execution environments.
 from __future__ import annotations
 
 import os
+import threading
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 import robosuite as suite
 import viser
-
-# Temporary viser debugging imports
 import viser.transforms as vtf
 from robosuite.controllers.composite.composite_controller_factory import (
     load_composite_controller_config,
@@ -22,10 +22,20 @@ from robosuite.controllers.composite.composite_controller_factory import (
 from robosuite.utils.camera_utils import get_real_depth_map
 
 from robosuite.environments.custom.base_env import BaseEnv
-from robosuite.environments.custom.utils.camera_utils import obs_get_rgb
-from robosuite.environments.custom.utils.depth_utils import depth_color_to_pointcloud
 
 os.environ.setdefault("MUJOCO_GL", "egl")
+
+
+@dataclass
+class ViserGotoInteraction:
+    """Thread-safe bridge between the sim thread and viser UI callbacks."""
+    label: str = ""
+    step_mode: bool = False
+    paused: bool = False
+    resume_event: threading.Event = field(default_factory=threading.Event)
+    # Current goto target in world frame (set by API, displayed via transform control)
+    target_world_pos: np.ndarray | None = None
+    target_world_wxyz: np.ndarray | None = None
 
 
 class FrankaRobosuiteTapeHandover(BaseEnv):
@@ -145,16 +155,28 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
         self._gripper_fraction_0 = 1.0  # Target gripper state for robot0
         self._gripper_fraction_1 = 1.0  # Target gripper state for robot1
 
-        # Temporary viser debugging
-        if viser_debug:
-            self.viser_server = viser.ViserServer()
+        # Handover geometry parameters — readable by action code via get_handover_params().
+        # Initialised to zero; call scripts should update from their CLI args.
+        self.handover_params: dict = {
+            "x_shift": 0.0,
+            "y_shift": 0.0,
+            "angle_shift": 0.0,
+            "perturb_radius": 0.02,
+        }
 
-            self.pyroki_ee_frame_handle = None
+        use_viser_debug = viser_debug or os.getenv("ROBOSUITE_TAPE_HANDOVER_VISER_DEBUG", "0") == "1"
+        if use_viser_debug:
+            self.viser_server = viser.ViserServer()
+            self._urdf_vis_0 = None
+            self._urdf_vis_1 = None
+            self._viser_scene_init = False
+            self._viser_step = 0
             self.mjcf_ee_frame_handle = None
-            self.urdf_vis = None
             self.viser_img_handle = None
-            self.image_frustum_handle = None
-            self.gripper_metric_length = 0.0584
+            self.viser_interaction = ViserGotoInteraction()
+            self._target_ctrl = None
+            self._op_label = None
+            self._resume_btn = None
         self.reset()
 
     def reset(
@@ -665,88 +687,229 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                     except Exception:
                         pass
 
-    # Temporary viser debugging
-    def _update_viser_server(
-        self,
-    ) -> None:
-        obs = self.get_observation()
-        if self.viser_server is not None:
-            self._viser_init_check()
-
-            # action_joint = action["arm"]["joint_pos"]
-            # action_cartesian = action["arm"]["cartesian_pos"][:-1]
-
-            # obs_joint = obs["robot_joint_pos"]
-            obs_cartesian = obs["robot_cartesian_pos"][:-1]
-
-            # action_joint_copy = action_joint.copy()
-            # action_joint_copy[-1] /= self.gripper_metric_length
-
-            # self.urdf_vis.update_cfg(action_joint_copy)
-            # self.urdf_mj_vis.update_cfg(obs_joint)
-
-            # self.pyroki_ee_frame_handle.position = action_cartesian[:3]
-            # self.pyroki_ee_frame_handle.wxyz = action_cartesian[3:]
-
-            self.mjcf_ee_frame_handle.position = obs_cartesian[:3]
-            self.mjcf_ee_frame_handle.wxyz = obs_cartesian[3:]
-
-            rbg_imgs = obs_get_rgb(obs)
-            # if len(rbg_imgs.keys()) > 0:
-            for image_key in rbg_imgs:
-                self.viser_img_handle.image = rbg_imgs[image_key]
-
-                if "pose" in obs[image_key]:
-                    self.image_frustum_handle.position = obs[image_key]["pose"][:3]
-                    self.image_frustum_handle.wxyz = obs[image_key]["pose"][3:]
-                    self.image_frustum_handle.image = rbg_imgs[image_key]
-                else:
-                    self.image_frustum_handle.visible = False
-
-            # Temporary hardcode to visualise some stuff for debugging
-            if "depth" in obs["agentview"]["images"]:
-                points, colors = depth_color_to_pointcloud(
-                    obs["agentview"]["images"]["depth"][:, :, 0],
-                    rbg_imgs["agentview"],
-                    obs["agentview"]["intrinsics"],
-                )
-                self.viser_server.scene.add_point_cloud(
-                    "agentview/point_cloud",
-                    points,
-                    colors,
-                    point_size=0.001,
-                    point_shape="square",
-                )
-
-    def update_viser_image(self, frame: np.ndarray) -> None:
+    def _update_viser_server(self) -> None:
         if self.viser_server is None:
             return
+
+        self._viser_step += 1
+        # Throttle to ~30 Hz at 500 Hz sim rate
+        # if self._viser_step % 16 != 0:
+        #     return
+
         self._viser_init_check()
+
+        sim = self.robosuite_env.sim
+        obs = self.robosuite_env._get_observations()
+
+        if self._urdf_vis_0 is not None:
+            r0_joints = np.array(obs["robot0_joint_pos"], dtype=np.float64)
+            r0_finger = np.array(obs.get("robot0_gripper_qpos", [0.04, -0.04])[:1], dtype=np.float64)
+            self._urdf_vis_0.update_cfg(np.concatenate([r0_joints, r0_finger]))
+
+            r1_joints = np.array(obs["robot1_joint_pos"], dtype=np.float64)
+            r1_finger = np.array(obs.get("robot1_gripper_qpos", [0.04, -0.04])[:1], dtype=np.float64)
+            self._urdf_vis_1.update_cfg(np.concatenate([r1_joints, r1_finger]))
+
+        if self.mjcf_ee_frame_handle is not None:
+            ee_pos = sim.data.xpos[self.gripper_link_idx_0]
+            ee_wxyz = vtf.SO3.from_matrix(sim.data.xmat[self.gripper_link_idx_0].reshape(3, 3)).wxyz
+            self.mjcf_ee_frame_handle.position = tuple(ee_pos)
+            self.mjcf_ee_frame_handle.wxyz = tuple(ee_wxyz)
+
+        for attr, path, color in [
+            ("yellow_tape_body_id", "/yellow_tape", (255, 220, 0)),
+            ("duct_tape_body_id", "/duct_tape", (60, 60, 60)),
+        ]:
+            try:
+                body_id = getattr(self.robosuite_env, attr)
+                pos = sim.data.body_xpos[body_id]
+                wxyz = vtf.SO3.from_matrix(sim.data.body_xmat[body_id].reshape(3, 3)).wxyz
+                self.viser_server.scene.add_box(
+                    path, color=color, dimensions=(0.05, 0.05, 0.025),
+                    position=tuple(pos), wxyz=tuple(wxyz),
+                )
+            except Exception:
+                pass
+
+        if self._op_label is not None:
+            label = self.viser_interaction.label or "*Idle*"
+            self._op_label.content = label
+
         if self.viser_img_handle is not None:
-            self.viser_img_handle.image = frame
+            try:
+                frame = sim.render(
+                    camera_name="agentview",
+                    width=self._render_width, height=self._render_height, depth=False,
+                )[::-1]
+                self.viser_img_handle.image = frame
+            except Exception:
+                pass
 
     def _viser_init_check(self) -> None:
-        if self.viser_server is None:
+        if self.viser_server is None or self._viser_scene_init:
             return
 
-        if self.mjcf_ee_frame_handle is None:
-            self.mjcf_ee_frame_handle = self.viser_server.scene.add_frame(
-                "/panda_ee_target_mjcf", axes_length=0.15, axes_radius=0.005
+        sim = self.robosuite_env.sim
+
+        self.viser_server.scene.set_up_direction("+z")
+        self.viser_server.scene.add_grid("/floor", width=5, height=5, cell_size=0.2)
+
+        self._add_table_geometry(sim)
+        self._load_robot_urdfs(sim)
+
+        img_init = np.zeros((self._render_height, self._render_width, 3), dtype=np.uint8)
+        self.viser_img_handle = self.viser_server.gui.add_image(img_init, label="Agentview")
+
+        self.mjcf_ee_frame_handle = self.viser_server.scene.add_frame(
+            "/robot0_ee", axes_length=0.08, axes_radius=0.004
+        )
+
+        self._build_interaction_gui()
+        self._viser_scene_init = True
+
+    def _build_interaction_gui(self) -> None:
+        """Build the step-mode and handover-parameters panels in the viser sidebar."""
+        with self.viser_server.gui.add_folder("Goto Step Mode"):
+            self._op_label = self.viser_server.gui.add_markdown("*Idle*")
+            step_cb = self.viser_server.gui.add_checkbox("Pause before each goto", False)
+            self._resume_btn = self.viser_server.gui.add_button(
+                "▶ Resume", disabled=True, color="green"
             )
 
-        if self.viser_img_handle is None:
-            img_init = np.zeros((480, 640, 3), dtype=np.uint8)
-            self.viser_img_handle = self.viser_server.gui.add_image(img_init, label="Mujoco render")
+        @step_cb.on_update
+        def _on_step_mode(event):
+            self.viser_interaction.step_mode = event.target.value
 
-        if self.image_frustum_handle is None:
-            self.image_frustum_handle = self.viser_server.scene.add_camera_frustum(
-                name="agentview",
-                position=(0, 0, 0),
-                wxyz=(1, 0, 0, 0),
-                fov=1.0,
-                aspect=self._render_width / self._render_height,
-                scale=0.05,
+        @self._resume_btn.on_click
+        def _on_resume(_):
+            self._resume_btn.disabled = True
+            if self._target_ctrl is not None:
+                self._target_ctrl.visible = False
+            self.viser_interaction.paused = False
+            self.viser_interaction.resume_event.set()
+
+        # Draggable 3D gizmo shown at the goto target while paused
+        self._target_ctrl = self.viser_server.scene.add_transform_controls(
+            "/goto_target",
+            scale=0.12,
+            disable_rotations=True,
+            visible=False,
+        )
+
+        self._build_handover_params_gui()
+
+    def _build_handover_params_gui(self) -> None:
+        """Slider panel for live adjustment of handover geometry parameters."""
+        p = self.handover_params
+        with self.viser_server.gui.add_folder("Handover Parameters"):
+            x_sl = self.viser_server.gui.add_slider(
+                "x_shift", min=-0.4, max=0.4, step=0.005,
+                initial_value=float(p["x_shift"]),
+                hint="Shifts the handover position along X in robot0 frame",
             )
+            y_sl = self.viser_server.gui.add_slider(
+                "y_shift", min=-0.4, max=0.4, step=0.005,
+                initial_value=float(p["y_shift"]),
+                hint="Shifts the handover position along Y in robot0 frame",
+            )
+            angle_sl = self.viser_server.gui.add_slider(
+                "angle_shift (rad)", min=-1.57, max=1.57, step=0.01,
+                initial_value=float(p["angle_shift"]),
+                hint="Rotates the handover position around Z",
+            )
+            perturb_sl = self.viser_server.gui.add_slider(
+                "perturb_radius", min=0.0, max=0.2, step=0.005,
+                initial_value=float(p["perturb_radius"]),
+                hint="Radius of the perturbation sphere for waypoint sampling",
+            )
+
+        @x_sl.on_update
+        def _(e): self.handover_params["x_shift"] = e.target.value
+
+        @y_sl.on_update
+        def _(e): self.handover_params["y_shift"] = e.target.value
+
+        @angle_sl.on_update
+        def _(e): self.handover_params["angle_shift"] = e.target.value
+
+        @perturb_sl.on_update
+        def _(e): self.handover_params["perturb_radius"] = e.target.value
+
+    def _viser_push_interaction(self) -> None:
+        """Push the current interaction state to viser immediately (called from API thread)."""
+        if not self._viser_scene_init or self._op_label is None:
+            return
+        self._op_label.content = self.viser_interaction.label or "*Idle*"
+        if (self.viser_interaction.paused
+                and self.viser_interaction.target_world_pos is not None
+                and self._target_ctrl is not None):
+            self._target_ctrl.position = tuple(self.viser_interaction.target_world_pos)
+            wxyz = self.viser_interaction.target_world_wxyz
+            if wxyz is not None:
+                self._target_ctrl.wxyz = tuple(wxyz)
+            self._target_ctrl.visible = True
+            self._resume_btn.disabled = False
+
+    def _add_table_geometry(self, sim) -> None:
+        MUJOCO_BOX = 6
+        for table_name in ("table0", "table1"):
+            try:
+                body_id = sim.model.body_name2id(table_name)
+            except Exception:
+                continue
+            for geom_id in range(sim.model.ngeom):
+                if (sim.model.geom_bodyid[geom_id] == body_id
+                        and sim.model.geom_type[geom_id] == MUJOCO_BOX):
+                    half_size = sim.model.geom_size[geom_id]
+                    pos = sim.data.geom_xpos[geom_id]
+                    wxyz = vtf.SO3.from_matrix(sim.data.geom_xmat[geom_id].reshape(3, 3)).wxyz
+                    self.viser_server.scene.add_box(
+                        f"/scene/{table_name}",
+                        color=(165, 120, 75),
+                        dimensions=tuple((half_size * 2).tolist()),
+                        position=tuple(pos.tolist()),
+                        wxyz=tuple(wxyz.tolist()),
+                    )
+                    break
+            break
+
+    def _load_robot_urdfs(self, sim) -> None:
+        try:
+            from robot_descriptions.loaders.yourdfpy import load_robot_description
+            from viser.extras import ViserUrdf
+        except Exception as e:
+            print(f"[viser] Could not import URDF tools: {e}")
+            return
+
+        urdf = load_robot_description("panda_description")
+
+        def robot_base_wxyz_xyz(robot_idx: int) -> np.ndarray:
+            for name in (f"robot{robot_idx}_link0", f"robot{robot_idx}_base"):
+                try:
+                    body_id = sim.model.body_name2id(name)
+                    pos = sim.data.body_xpos[body_id].copy()
+                    wxyz = vtf.SO3.from_matrix(sim.data.body_xmat[body_id].reshape(3, 3)).wxyz
+                    return np.concatenate([wxyz, pos])
+                except Exception:
+                    pass
+            # Fall back to the cached fixed-mount base transform
+            return self.base_link_wxyz_xyz_0 if robot_idx == 0 else self.base_link_wxyz_xyz_1
+
+        for idx, (frame_name, urdf_attr) in enumerate(
+            [("/robot0_base", "_urdf_vis_0"), ("/robot1_base", "_urdf_vis_1")]
+        ):
+            base = robot_base_wxyz_xyz(idx)
+            self.viser_server.scene.add_frame(
+                frame_name, position=tuple(base[4:]), wxyz=tuple(base[:4]),
+                axes_length=0.05, axes_radius=0.002,
+            )
+            setattr(self, urdf_attr, ViserUrdf(
+                self.viser_server, urdf, root_node_name=f"{frame_name}/panda"
+            ))
+
+        print(f"[viser] Robot URDFs loaded at:"
+              f" arm0={robot_base_wxyz_xyz(0)[4:].round(3)}"
+              f" arm1={robot_base_wxyz_xyz(1)[4:].round(3)}")
 
 
 __all__ = ["RobosuiteHandoverEnv"]

@@ -76,8 +76,19 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             "goto_home_joint_position_arm0": self.goto_home_joint_position_arm0,
             "goto_home_joint_position_arm1": self.goto_home_joint_position_arm1,
             "get_arm_base_midpoint_z": self.get_arm_base_midpoint_z,
+            "get_handover_params": self.get_handover_params,
         }
         return fns
+
+    def get_handover_params(self) -> dict:
+        """Return live handover geometry parameters.
+
+        When running with viser, these values are driven by the sidebar sliders.
+        Falls back to the env's stored defaults (set from CLI args) otherwise.
+        """
+        params = getattr(self._env, "handover_params", {})
+        defaults = {"x_shift": 0.0, "y_shift": 0.0, "angle_shift": 0.0, "perturb_radius": 0.02}
+        return {**defaults, **params}
 
     def get_arm_base_midpoint_z(self) -> float:
         """Z-coordinate of the midpoint between the two arm bases, in robot0's base frame.
@@ -208,12 +219,55 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             raise ValueError("Environment does not provide robot1_cartesian_pos.")
         return obs["robot1_cartesian_pos"][:3], obs["robot1_cartesian_pos"][3:7]
 
+    def _viser_goto_hook(
+        self, label: str, pos_robot0: np.ndarray, quat_wxyz: np.ndarray
+    ) -> np.ndarray:
+        """Show the goto target in viser, optionally pause and allow the user to drag it.
+
+        Returns the (possibly adjusted) target position in robot0 frame.
+        """
+        interaction = getattr(self._env, "viser_interaction", None)
+        if interaction is None:
+            return pos_robot0
+
+        base0 = self._vtf.SE3(wxyz_xyz=self._env.base_link_wxyz_xyz_0)
+        world_pos = (base0 @ self._vtf.SE3.from_translation(pos_robot0)).translation()
+        world_wxyz = (base0.rotation() @ self._vtf.SO3(wxyz=quat_wxyz)).wxyz
+
+        interaction.label = f"**{label}**  `{world_pos.round(3)}`"
+        interaction.target_world_pos = world_pos.copy()
+        interaction.target_world_wxyz = np.array(world_wxyz)
+
+        if not interaction.step_mode:
+            if hasattr(self._env, "_viser_push_interaction"):
+                self._env._viser_push_interaction()
+            return pos_robot0
+
+        interaction.paused = True
+        interaction.resume_event.clear()
+        if hasattr(self._env, "_viser_push_interaction"):
+            self._env._viser_push_interaction()
+
+        print(f"[viser] Paused at: {label}  world={world_pos.round(3)}")
+        interaction.resume_event.wait()
+        print(f"[viser] Resumed.")
+
+        # Read back adjusted world position from the transform control
+        ctrl = getattr(self._env, "_target_ctrl", None)
+        if ctrl is not None:
+            adjusted_world = np.array(ctrl.position)
+            adjusted_robot0 = (base0.inverse() @ self._vtf.SE3.from_translation(adjusted_world)).translation()
+            return np.asarray(adjusted_robot0, dtype=np.float64)
+
+        return pos_robot0
+
     def goto_pose_arm0(
         self, position: np.ndarray, quaternion_wxyz: np.ndarray, z_approach: float = 0.0
     ) -> None:
         """Go to pose using Inverse Kinematics for Arm 0 (robot0)."""
         pos = np.asarray(position, dtype=np.float64).reshape(3)
         quat_wxyz = np.asarray(quaternion_wxyz, dtype=np.float64).reshape(4)
+        pos = self._viser_goto_hook("goto_pose_arm0", pos, quat_wxyz)
         quat_xyzw = np.array(
             [quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]], dtype=np.float64
         )
@@ -322,6 +376,10 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         """Go to pose using Inverse Kinematics for Arm 1 (robot1)."""
         if not hasattr(self._env, "move_to_joints_blocking_arm1"):
             raise RuntimeError("Environment does not support Arm 1 control")
+        position = self._viser_goto_hook(
+            "goto_pose_arm1", np.asarray(position, dtype=np.float64).reshape(3),
+            np.asarray(quaternion_wxyz, dtype=np.float64).reshape(4),
+        )
 
         if not hasattr(self._env, "base_link_wxyz_xyz_0") or not hasattr(self._env, "base_link_wxyz_xyz_1"):
             raise RuntimeError("Environment does not provide base transforms.")
