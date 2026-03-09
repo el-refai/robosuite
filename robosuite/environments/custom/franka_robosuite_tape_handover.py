@@ -188,7 +188,7 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             self._target_ctrl = None
             self._op_label = None
             self._resume_btn = None
-        self.reset()
+        self.reset(seed=seed)
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
