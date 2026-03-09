@@ -36,6 +36,12 @@ class ViserGotoInteraction:
     # Current goto target in world frame (set by API, displayed via transform control)
     target_world_pos: np.ndarray | None = None
     target_world_wxyz: np.ndarray | None = None
+    # Randomization config for the current goto (set by API before pause, read by env for UI)
+    randomization: dict | None = None
+    # 0-based index of the current goto call in the action code (for code injection)
+    goto_index: int = 0
+    # Callback for notifying the editor of randomization changes
+    on_randomization_change: Any = None
 
 
 class FrankaRobosuiteTapeHandover(BaseEnv):
@@ -173,6 +179,11 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             self._viser_step = 0
             self.mjcf_ee_frame_handle = None
             self.viser_img_handle = None
+            self._arm1_sphere_handle = None
+            self._arm0_sphere_handle = None
+            self._handover_frame_handle = None
+            self._arm0_handover_frame_handle = None
+            self._rand_viz_handle = None
             self.viser_interaction = ViserGotoInteraction()
             self._target_ctrl = None
             self._op_label = None
@@ -785,6 +796,9 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             self._resume_btn.disabled = True
             if self._target_ctrl is not None:
                 self._target_ctrl.visible = False
+            self._rand_folder.visible = False
+            self._hide_randomization_viz()
+            self.viser_interaction.randomization = None
             self.viser_interaction.paused = False
             self.viser_interaction.resume_event.set()
 
@@ -796,7 +810,204 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
             visible=False,
         )
 
+        # Draggable gizmo for repositioning the randomization shape center
+        self._rand_gizmo = self.viser_server.scene.add_transform_controls(
+            "/rand_center",
+            scale=0.08,
+            disable_rotations=True,
+            visible=False,
+        )
+
+        @self._rand_gizmo.on_update
+        def _on_rand_gizmo_move(_):
+            r = self.viser_interaction.randomization
+            if r is not None and self.viser_interaction.paused:
+                new_center = np.array(self._rand_gizmo.position, dtype=np.float64)
+                r["_center_world"] = new_center
+                self._show_randomization_viz(new_center, r)
+                target = self.viser_interaction.target_world_pos
+                if target is not None:
+                    offset = new_center - np.array(target, dtype=np.float64)
+                    self._rand_gui_updating = True
+                    try:
+                        self._rand_shift_x.value = float(np.clip(offset[0], -0.3, 0.3))
+                        self._rand_shift_y.value = float(np.clip(offset[1], -0.3, 0.3))
+                        self._rand_shift_z.value = float(np.clip(offset[2], -0.3, 0.3))
+                    finally:
+                        self._rand_gui_updating = False
+
+        self._build_randomization_gui()
         self._build_handover_params_gui()
+
+    def _notify_randomization_change(self) -> None:
+        """Notify the editor (if registered) that randomization config changed."""
+        cb = self.viser_interaction.on_randomization_change
+        if cb is not None:
+            r = self.viser_interaction.randomization
+            cb(self.viser_interaction.goto_index, r)
+
+    def _build_randomization_gui(self) -> None:
+        """UI panel for adding/editing sphere/cone randomization while paused at a goto."""
+        self._rand_folder = self.viser_server.gui.add_folder(
+            "Goto Randomization", visible=False,
+        )
+        with self._rand_folder:
+            self._rand_type_dropdown = self.viser_server.gui.add_dropdown(
+                "Shape", options=["none", "sphere", "cone"], initial_value="none",
+            )
+            self._rand_keep_endpoint_cb = self.viser_server.gui.add_checkbox(
+                "Keep original endpoint", initial_value=True,
+                hint="When checked, the randomized point is an intermediate waypoint "
+                     "and the arm still moves to the original goto target afterwards.",
+            )
+            self._rand_radius_sl = self.viser_server.gui.add_slider(
+                "sphere radius", min=0.005, max=0.2, step=0.005,
+                initial_value=0.05, visible=False,
+            )
+            self._rand_shift_x = self.viser_server.gui.add_slider(
+                "center X shift", min=-0.3, max=0.3, step=0.005,
+                initial_value=0.0, visible=False,
+                hint="X offset of shape center from goto target (world frame)",
+            )
+            self._rand_shift_y = self.viser_server.gui.add_slider(
+                "center Y shift", min=-0.3, max=0.3, step=0.005,
+                initial_value=0.0, visible=False,
+                hint="Y offset of shape center from goto target (world frame)",
+            )
+            self._rand_shift_z = self.viser_server.gui.add_slider(
+                "center Z shift", min=-0.3, max=0.3, step=0.005,
+                initial_value=0.0, visible=False,
+                hint="Z offset of shape center from goto target (world frame)",
+            )
+            self._rand_depth_sl = self.viser_server.gui.add_slider(
+                "cone depth", min=0.005, max=0.4, step=0.005,
+                initial_value=0.2, visible=False,
+            )
+            self._rand_base_radius_sl = self.viser_server.gui.add_slider(
+                "cone base radius", min=0.005, max=0.2, step=0.005,
+                initial_value=0.05, visible=False,
+            )
+
+        self._rand_gui_updating = False
+
+        def _get_shifted_center() -> np.ndarray:
+            """Compute shape center = goto target + slider offsets."""
+            target = self.viser_interaction.target_world_pos
+            if target is None:
+                return np.array(self._rand_gizmo.position, dtype=np.float64)
+            return np.array(target, dtype=np.float64) + np.array([
+                self._rand_shift_x.value,
+                self._rand_shift_y.value,
+                self._rand_shift_z.value,
+            ])
+
+        def _apply_shift_sliders():
+            """Update center, gizmo, and viz from the current shift slider values."""
+            r = self.viser_interaction.randomization
+            if r is None:
+                return
+            center = _get_shifted_center()
+            r["_center_world"] = center
+            self._rand_gizmo.position = tuple(center)
+            self._refresh_randomization_viz()
+            self._notify_randomization_change()
+
+        def _update_keep_endpoint():
+            r = self.viser_interaction.randomization
+            if r is not None:
+                r["keep_endpoint"] = self._rand_keep_endpoint_cb.value
+                self._notify_randomization_change()
+
+        @self._rand_keep_endpoint_cb.on_update
+        def _(e):
+            if not self._rand_gui_updating:
+                _update_keep_endpoint()
+
+        @self._rand_type_dropdown.on_update
+        def _(e):
+            if self._rand_gui_updating:
+                return
+            shape = e.target.value
+            is_sphere = (shape == "sphere")
+            is_cone = (shape == "cone")
+            has_shape = is_sphere or is_cone
+            self._rand_radius_sl.visible = is_sphere
+            self._rand_shift_x.visible = has_shape
+            self._rand_shift_y.visible = has_shape
+            self._rand_shift_z.visible = has_shape
+            self._rand_depth_sl.visible = is_cone
+            self._rand_base_radius_sl.visible = is_cone
+            if shape == "none":
+                self.viser_interaction.randomization = None
+                self._rand_gizmo.visible = False
+                self._hide_randomization_viz()
+            else:
+                center = _get_shifted_center()
+                keep = self._rand_keep_endpoint_cb.value
+                if is_sphere:
+                    self.viser_interaction.randomization = {
+                        "type": "sphere",
+                        "radius": float(self._rand_radius_sl.value),
+                        "keep_endpoint": keep,
+                        "_center_world": center,
+                    }
+                elif is_cone:
+                    self.viser_interaction.randomization = {
+                        "type": "cone",
+                        "depth": float(self._rand_depth_sl.value),
+                        "base_radius": float(self._rand_base_radius_sl.value),
+                        "keep_endpoint": keep,
+                        "_center_world": center,
+                    }
+                self._rand_gizmo.position = tuple(center)
+                self._rand_gizmo.visible = True
+                self._refresh_randomization_viz()
+            self._notify_randomization_change()
+
+        @self._rand_radius_sl.on_update
+        def _(e):
+            if self._rand_gui_updating:
+                return
+            r = self.viser_interaction.randomization
+            if r and r.get("type") == "sphere":
+                r["radius"] = e.target.value
+                self._refresh_randomization_viz()
+                self._notify_randomization_change()
+
+        @self._rand_shift_x.on_update
+        def _(e):
+            if not self._rand_gui_updating:
+                _apply_shift_sliders()
+
+        @self._rand_shift_y.on_update
+        def _(e):
+            if not self._rand_gui_updating:
+                _apply_shift_sliders()
+
+        @self._rand_shift_z.on_update
+        def _(e):
+            if not self._rand_gui_updating:
+                _apply_shift_sliders()
+
+        @self._rand_depth_sl.on_update
+        def _(e):
+            if self._rand_gui_updating:
+                return
+            r = self.viser_interaction.randomization
+            if r and r.get("type") == "cone":
+                r["depth"] = e.target.value
+                self._refresh_randomization_viz()
+                self._notify_randomization_change()
+
+        @self._rand_base_radius_sl.on_update
+        def _(e):
+            if self._rand_gui_updating:
+                return
+            r = self.viser_interaction.randomization
+            if r and r.get("type") == "cone":
+                r["base_radius"] = e.target.value
+                self._refresh_randomization_viz()
+                self._notify_randomization_change()
 
     def _build_handover_params_gui(self) -> None:
         """Slider panel for live adjustment of handover geometry parameters."""
@@ -823,17 +1034,242 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                 hint="Radius of the perturbation sphere for waypoint sampling",
             )
 
+        self._show_spheres_cb = self.viser_server.gui.add_checkbox(
+            "Show waypoint spheres", False
+        )
+
         @x_sl.on_update
-        def _(e): self.handover_params["x_shift"] = e.target.value
+        def _(e):
+            self.handover_params["x_shift"] = e.target.value
+            self._update_waypoint_spheres()
 
         @y_sl.on_update
-        def _(e): self.handover_params["y_shift"] = e.target.value
+        def _(e):
+            self.handover_params["y_shift"] = e.target.value
+            self._update_waypoint_spheres()
 
         @angle_sl.on_update
-        def _(e): self.handover_params["angle_shift"] = e.target.value
+        def _(e):
+            self.handover_params["angle_shift"] = e.target.value
+            self._update_waypoint_spheres()
 
         @perturb_sl.on_update
-        def _(e): self.handover_params["perturb_radius"] = e.target.value
+        def _(e):
+            self.handover_params["perturb_radius"] = e.target.value
+            self._update_waypoint_spheres()
+
+        @self._show_spheres_cb.on_update
+        def _(e):
+            self._update_waypoint_spheres()
+
+    @staticmethod
+    def _sphere_surface_points(center: np.ndarray, radius: float,
+                               n_phi: int = 12, n_theta: int = 18) -> np.ndarray:
+        """Generate points on a sphere surface for visualization."""
+        points = []
+        for i in range(n_phi + 1):
+            phi = np.pi * i / n_phi
+            for j in range(n_theta):
+                theta = 2.0 * np.pi * j / n_theta
+                x = radius * np.sin(phi) * np.cos(theta)
+                y = radius * np.sin(phi) * np.sin(theta)
+                z = radius * np.cos(phi)
+                points.append(center + np.array([x, y, z]))
+        return np.array(points, dtype=np.float32)
+
+    def _compute_handover_world(self):
+        """Compute handover and arm0-handover positions in world frame."""
+        sim = self.robosuite_env.sim
+        base0 = vtf.SE3(wxyz_xyz=self.base_link_wxyz_xyz_0)
+        base0_inv = base0.inverse()
+
+        arm0_w = sim.data.xpos[self.gripper_link_idx_0].copy()
+        arm1_w = sim.data.xpos[self.gripper_link_idx_1].copy()
+        arm0_r0 = np.asarray((base0_inv @ vtf.SE3.from_translation(arm0_w)).translation())
+        arm1_r0 = np.asarray((base0_inv @ vtf.SE3.from_translation(arm1_w)).translation())
+        center_r0 = (arm0_r0 + arm1_r0) / 2
+
+        p = self.handover_params
+        ang = p.get("angle_shift", 0.0)
+        Rz_q = np.array([np.cos(ang / 2), 0, 0, np.sin(ang / 2)])
+        Rz = vtf.SO3(wxyz=Rz_q).as_matrix()
+
+        h_r0 = center_r0 + Rz @ np.array([-0.15 - p.get("x_shift", 0.0),
+                                            0.1 + p.get("y_shift", 0.0), 0.0])
+        a0_r0 = h_r0 + Rz @ np.array([0.035, -0.1025, 0.0])
+
+        h_w = np.asarray((base0 @ vtf.SE3.from_translation(h_r0)).translation())
+        a0_w = np.asarray((base0 @ vtf.SE3.from_translation(a0_r0)).translation())
+        return h_w, a0_w
+
+    def _update_waypoint_spheres(self) -> None:
+        """Draw or hide the waypoint sampling spheres in the viser scene."""
+        if self.viser_server is None or not self._viser_scene_init:
+            return
+
+        show = (getattr(self, "_show_spheres_cb", None) is not None
+                and self._show_spheres_cb.value)
+        perturb_r = self.handover_params.get("perturb_radius", 0.0)
+
+        if not show or perturb_r <= 0:
+            for h in (self._arm1_sphere_handle, self._arm0_sphere_handle,
+                      self._handover_frame_handle, self._arm0_handover_frame_handle):
+                if h is not None:
+                    h.visible = False
+            return
+
+        h_w, a0_w = self._compute_handover_world()
+
+        # Offset sphere centers so they just barely touch (center-to-center = 2r)
+        sep = h_w - a0_w
+        sep_d = np.linalg.norm(sep)
+        sep_hat = sep / sep_d if sep_d > 1e-6 else np.array([1.0, 0.0, 0.0])
+        mid = (h_w + a0_w) / 2
+        arm1_sph = mid + perturb_r * sep_hat
+        arm0_sph = mid - perturb_r * sep_hat
+
+        pts1 = self._sphere_surface_points(arm1_sph, perturb_r)
+        colors1 = np.full((len(pts1), 3), [255, 180, 0], dtype=np.uint8)
+        self._arm1_sphere_handle = self.viser_server.scene.add_point_cloud(
+            "/waypoint_sphere_arm1", pts1, colors1,
+            point_size=0.006, point_shape="circle",
+        )
+
+        pts0 = self._sphere_surface_points(arm0_sph, perturb_r)
+        colors0 = np.full((len(pts0), 3), [60, 180, 255], dtype=np.uint8)
+        self._arm0_sphere_handle = self.viser_server.scene.add_point_cloud(
+            "/waypoint_sphere_arm0", pts0, colors0,
+            point_size=0.006, point_shape="circle",
+        )
+
+        self._handover_frame_handle = self.viser_server.scene.add_frame(
+            "/handover_pos_frame", position=tuple(h_w),
+            axes_length=0.06, axes_radius=0.003,
+        )
+        self._arm0_handover_frame_handle = self.viser_server.scene.add_frame(
+            "/arm0_handover_pos_frame", position=tuple(a0_w),
+            axes_length=0.06, axes_radius=0.003,
+        )
+
+    @staticmethod
+    def _cone_surface_points(
+        apex: np.ndarray, axis_toward_base: np.ndarray,
+        depth: float, base_radius: float,
+        n_depth: int = 12, n_theta: int = 24,
+    ) -> np.ndarray:
+        """Points on cone lateral surface and base for visualization."""
+        axis = axis_toward_base / (np.linalg.norm(axis_toward_base) + 1e-9)
+        v1 = np.array([0.0, 0.0, 1.0]) if abs(axis[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+        v1 = v1 - np.dot(v1, axis) * axis
+        v1 = v1 / (np.linalg.norm(v1) + 1e-9)
+        v2 = np.cross(axis, v1)
+        points = []
+        for i in range(1, n_depth + 1):
+            d = depth * i / n_depth
+            r = d * (base_radius / depth)
+            for j in range(n_theta):
+                theta = 2.0 * np.pi * j / n_theta
+                points.append(apex + d * axis + r * (np.cos(theta) * v1 + np.sin(theta) * v2))
+        points.append(apex)
+        return np.array(points, dtype=np.float32)
+
+    def _show_randomization_viz(self, target_world_pos: np.ndarray, config: dict) -> None:
+        """Draw sphere or cone point cloud at the goto target for randomization editing."""
+        if self._rand_viz_handle is not None:
+            self._rand_viz_handle.remove()
+            self._rand_viz_handle = None
+        shape = config.get("type")
+        if shape == "sphere":
+            radius = config.get("radius", 0.05)
+            pts = self._sphere_surface_points(target_world_pos, radius)
+            colors = np.full((len(pts), 3), [100, 255, 100], dtype=np.uint8)
+            self._rand_viz_handle = self.viser_server.scene.add_point_cloud(
+                "/rand_viz", pts, colors, point_size=0.005, point_shape="circle",
+            )
+        elif shape == "cone":
+            depth = config.get("depth", 0.2)
+            base_radius = config.get("base_radius", 0.05)
+            axis = config.get("_axis", np.array([0.0, 0.0, -1.0]))
+            pts = self._cone_surface_points(target_world_pos, axis, depth, base_radius)
+            colors = np.full((len(pts), 3), [255, 160, 60], dtype=np.uint8)
+            self._rand_viz_handle = self.viser_server.scene.add_point_cloud(
+                "/rand_viz", pts, colors, point_size=0.005, point_shape="circle",
+            )
+
+    def _hide_randomization_viz(self) -> None:
+        """Remove the randomization point cloud and hide the gizmo."""
+        if self._rand_viz_handle is not None:
+            self._rand_viz_handle.remove()
+            self._rand_viz_handle = None
+        if hasattr(self, "_rand_gizmo"):
+            self._rand_gizmo.visible = False
+
+    def _refresh_randomization_viz(self) -> None:
+        """Re-draw the randomization visualization after a slider or gizmo change."""
+        r = self.viser_interaction.randomization
+        if r is None:
+            return
+        center = r.get("_center_world")
+        if center is None:
+            center = self.viser_interaction.target_world_pos
+        if center is not None:
+            self._show_randomization_viz(center, r)
+
+    def _sync_rand_gui_to_config(self, config: dict | None) -> None:
+        """Set the randomization dropdown/sliders to match config without triggering callbacks."""
+        self._rand_gui_updating = True
+        try:
+            if config is None:
+                self._rand_type_dropdown.value = "none"
+                self._rand_radius_sl.visible = False
+                self._rand_shift_x.visible = False
+                self._rand_shift_y.visible = False
+                self._rand_shift_z.visible = False
+                self._rand_depth_sl.visible = False
+                self._rand_base_radius_sl.visible = False
+                self._rand_keep_endpoint_cb.value = True
+                self._rand_shift_x.value = 0.0
+                self._rand_shift_y.value = 0.0
+                self._rand_shift_z.value = 0.0
+            elif config.get("type") == "sphere":
+                self._rand_type_dropdown.value = "sphere"
+                self._rand_radius_sl.value = config.get("radius", 0.05)
+                self._rand_radius_sl.visible = True
+                self._rand_shift_x.visible = True
+                self._rand_shift_y.visible = True
+                self._rand_shift_z.visible = True
+                self._rand_depth_sl.visible = False
+                self._rand_base_radius_sl.visible = False
+                self._rand_keep_endpoint_cb.value = config.get("keep_endpoint", True)
+                self._sync_shift_sliders_to_center(config)
+            elif config.get("type") == "cone":
+                self._rand_type_dropdown.value = "cone"
+                self._rand_depth_sl.value = config.get("depth", 0.2)
+                self._rand_base_radius_sl.value = config.get("base_radius", 0.05)
+                self._rand_radius_sl.visible = False
+                self._rand_shift_x.visible = True
+                self._rand_shift_y.visible = True
+                self._rand_shift_z.visible = True
+                self._rand_depth_sl.visible = True
+                self._rand_base_radius_sl.visible = True
+                self._rand_keep_endpoint_cb.value = config.get("keep_endpoint", True)
+                self._sync_shift_sliders_to_center(config)
+        finally:
+            self._rand_gui_updating = False
+
+    def _sync_shift_sliders_to_center(self, config: dict) -> None:
+        """Compute shift slider values from _center_world and target_world_pos."""
+        center = config.get("_center_world")
+        target = self.viser_interaction.target_world_pos
+        if center is not None and target is not None:
+            offset = np.array(center, dtype=np.float64) - np.array(target, dtype=np.float64)
+            self._rand_shift_x.value = float(np.clip(offset[0], -0.3, 0.3))
+            self._rand_shift_y.value = float(np.clip(offset[1], -0.3, 0.3))
+            self._rand_shift_z.value = float(np.clip(offset[2], -0.3, 0.3))
+        else:
+            self._rand_shift_x.value = 0.0
+            self._rand_shift_y.value = 0.0
+            self._rand_shift_z.value = 0.0
 
     def _viser_push_interaction(self) -> None:
         """Push the current interaction state to viser immediately (called from API thread)."""
@@ -849,6 +1285,22 @@ class FrankaRobosuiteTapeHandover(BaseEnv):
                 self._target_ctrl.wxyz = tuple(wxyz)
             self._target_ctrl.visible = True
             self._resume_btn.disabled = False
+
+            rand = self.viser_interaction.randomization
+            self._sync_rand_gui_to_config(rand)
+            self._rand_folder.visible = True
+            if rand is not None:
+                center = rand.get("_center_world", self.viser_interaction.target_world_pos)
+                self._rand_gizmo.position = tuple(center)
+                self._rand_gizmo.visible = True
+                self._show_randomization_viz(center, rand)
+            else:
+                self._rand_gizmo.position = tuple(self.viser_interaction.target_world_pos)
+                self._rand_gizmo.visible = False
+                self._hide_randomization_viz()
+        else:
+            self._rand_folder.visible = False
+            self._hide_randomization_viz()
 
     def _add_table_geometry(self, sim) -> None:
         MUJOCO_BOX = 6

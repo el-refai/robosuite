@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -83,10 +84,18 @@ class Waypoint:
     orientation_wxyz: np.ndarray  # (4,) wxyz quaternion
     gripper_action: GripperAction = GripperAction.NONE
     z_approach: float = 0.0
+    randomization: dict | None = None  # e.g. {"type": "sphere", "radius": 0.05}
 
     def label(self, index: int) -> str:
         grip = "" if self.gripper_action == GripperAction.NONE else f" | grip={self.gripper_action.value}"
-        return f"WP{index} arm{self.arm.value}{grip}"
+        rand = ""
+        if self.randomization:
+            rtype = self.randomization["type"]
+            if rtype == "sphere":
+                rand = f" | sph r={self.randomization.get('radius', 0.05):.3f}"
+            elif rtype == "cone":
+                rand = f" | cone d={self.randomization.get('depth', 0.2):.2f}"
+        return f"WP{index} arm{self.arm.value}{grip}{rand}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -170,6 +179,51 @@ class WaypointEditor:
                 "z_approach", min=0.0, max=0.30, step=0.005, initial_value=0.0,
                 hint="IK approach height offset along tool Z before final pose",
             )
+
+            with srv.gui.add_folder("Randomization"):
+                self._rand_type_select = srv.gui.add_dropdown(
+                    "Shape", options=["none", "sphere", "cone"], initial_value="none",
+                )
+                self._rand_radius_slider = srv.gui.add_slider(
+                    "Sphere radius", min=0.005, max=0.2, step=0.005,
+                    initial_value=0.05, visible=False,
+                )
+                self._rand_offset_x = srv.gui.add_slider(
+                    "Sphere offset X", min=-0.3, max=0.3, step=0.005,
+                    initial_value=0.0, visible=False,
+                    hint="X offset of sphere center from waypoint (robot0 frame)",
+                )
+                self._rand_offset_y = srv.gui.add_slider(
+                    "Sphere offset Y", min=-0.3, max=0.3, step=0.005,
+                    initial_value=0.0, visible=False,
+                    hint="Y offset of sphere center from waypoint (robot0 frame)",
+                )
+                self._rand_offset_z = srv.gui.add_slider(
+                    "Sphere offset Z", min=-0.3, max=0.3, step=0.005,
+                    initial_value=0.0, visible=False,
+                    hint="Z offset of sphere center from waypoint (robot0 frame)",
+                )
+                self._rand_depth_slider = srv.gui.add_slider(
+                    "Cone depth", min=0.005, max=0.4, step=0.005,
+                    initial_value=0.2, visible=False,
+                )
+                self._rand_base_radius_slider = srv.gui.add_slider(
+                    "Cone base radius", min=0.005, max=0.2, step=0.005,
+                    initial_value=0.05, visible=False,
+                )
+
+            @self._rand_type_select.on_update
+            def _on_rand_type(event):
+                shape = event.target.value
+                is_sphere = (shape == "sphere")
+                is_cone = (shape == "cone")
+                self._rand_radius_slider.visible = is_sphere
+                self._rand_offset_x.visible = is_sphere
+                self._rand_offset_y.visible = is_sphere
+                self._rand_offset_z.visible = is_sphere
+                self._rand_depth_slider.visible = is_cone
+                self._rand_base_radius_slider.visible = is_cone
+
             self._snap_btn = srv.gui.add_button("Snap gizmo to gripper", color="blue")
             self._record_btn = srv.gui.add_button("Record waypoint", color="green")
             self._undo_btn = srv.gui.add_button("Undo last waypoint")
@@ -271,6 +325,29 @@ class WaypointEditor:
     def _on_snap(self, _event: Any) -> None:
         self.cmd_queue.put(("snap", None))
 
+    def _get_selected_randomization(self) -> dict | None:
+        """Read the current randomization GUI state into a config dict (or None)."""
+        shape = self._rand_type_select.value
+        if shape == "none":
+            return None
+        if shape == "sphere":
+            offset = np.array([
+                float(self._rand_offset_x.value),
+                float(self._rand_offset_y.value),
+                float(self._rand_offset_z.value),
+            ])
+            cfg: dict = {"type": "sphere", "radius": float(self._rand_radius_slider.value)}
+            if np.linalg.norm(offset) > 1e-6:
+                cfg["offset"] = offset
+            return cfg
+        if shape == "cone":
+            return {
+                "type": "cone",
+                "depth": float(self._rand_depth_slider.value),
+                "base_radius": float(self._rand_base_radius_slider.value),
+            }
+        return None
+
     def _on_record(self, _event: Any) -> None:
         world_pos = np.array(self._gizmo.position)
         world_wxyz = np.array(self._gizmo.wxyz)
@@ -283,6 +360,7 @@ class WaypointEditor:
             orientation_wxyz=r0_wxyz.copy(),
             gripper_action=self._selected_gripper_action(),
             z_approach=float(self._z_approach_slider.value),
+            randomization=self._get_selected_randomization(),
         )
         self.waypoints.append(wp)
         self._draw_waypoint(len(self.waypoints) - 1, wp)
@@ -360,6 +438,12 @@ class WaypointEditor:
         self._playing = True
         self._play_status.content = "*Playing trajectory...*"
         self._play_btn.disabled = True
+
+        self._api._goto_counter = 0
+        self.low_level_env.viser_interaction.on_randomization_change = (
+            self._on_randomization_gui_change
+        )
+
         try:
             obs, reward, terminated, truncated, info = self.exec_env.step(code)
             rc = info.get("sandbox_rc", -1)
@@ -377,6 +461,7 @@ class WaypointEditor:
         finally:
             self._play_btn.disabled = False
             self._playing = False
+            self.low_level_env.viser_interaction.on_randomization_change = None
 
     def _handle_home(self, arm: ArmID) -> None:
         code = f"goto_home_joint_position_arm{arm.value}()"
@@ -409,6 +494,87 @@ class WaypointEditor:
         except Exception as exc:
             self._play_status.content = f"**Reset error:** {exc}"
             print(f"[editor] Reset error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Randomization ↔ code sync
+    # ------------------------------------------------------------------
+
+    _GOTO_RE = re.compile(r"^(\s*)(goto_pose_arm[01]\()", re.MULTILINE)
+    _SET_RAND_RE = re.compile(r"^\s*set_randomization\([^)]*\)\s*\n?", re.MULTILINE)
+
+    def _on_randomization_gui_change(self, goto_index: int, config: dict | None) -> None:
+        """Called from the viser thread when the user edits randomization while paused.
+
+        Injects or updates the ``set_randomization(...)`` line in the code editor
+        right before the *goto_index*-th ``goto_pose_arm*`` call.
+
+        Converts the world-frame ``_center_world`` to a robot0-frame ``offset``
+        so the generated code is self-contained.
+        """
+        if config is not None:
+            center_world = config.get("_center_world")
+            target_world = self.low_level_env.viser_interaction.target_world_pos
+            if center_world is not None and target_world is not None:
+                world_offset = np.asarray(center_world, dtype=np.float64) - np.asarray(target_world, dtype=np.float64)
+                base0 = vtf.SE3(wxyz_xyz=self.low_level_env.base_link_wxyz_xyz_0)
+                r0_offset = np.asarray(base0.inverse().rotation().as_matrix() @ world_offset, dtype=np.float64)
+                if np.linalg.norm(r0_offset) > 1e-6:
+                    config = {**config, "offset": r0_offset}
+                else:
+                    config = {k: v for k, v in config.items() if k != "offset"}
+
+        code = self._code_input.value
+        new_code = self._inject_set_randomization(code, goto_index, config)
+        if new_code != code:
+            self._code_input.value = new_code
+
+    @classmethod
+    def _inject_set_randomization(
+        cls, code: str, goto_index: int, config: dict | None,
+    ) -> str:
+        """Return *code* with a ``set_randomization(...)`` line added/updated/removed
+        before the *goto_index*-th ``goto_pose_arm*`` call."""
+        matches = list(cls._GOTO_RE.finditer(code))
+        if goto_index >= len(matches):
+            return code
+
+        goto_match = matches[goto_index]
+        goto_line_start = code.rfind("\n", 0, goto_match.start()) + 1
+        indent = goto_match.group(1)
+
+        prev_line_start = code.rfind("\n", 0, goto_line_start - 1) + 1 if goto_line_start > 0 else 0
+        prev_line = code[prev_line_start:goto_line_start]
+        had_set_rand = cls._SET_RAND_RE.fullmatch(prev_line) is not None
+
+        if config is None:
+            if had_set_rand:
+                return code[:prev_line_start] + code[goto_line_start:]
+            return code
+
+        rtype = config.get("type")
+        keep = config.get("keep_endpoint", True)
+        if rtype == "sphere":
+            parts = [f'"sphere"', f'radius={config.get("radius", 0.05)}']
+            offset = config.get("offset")
+            if offset is not None:
+                offset_str = np.array2string(
+                    np.asarray(offset), separator=", ", precision=6,
+                )
+                parts.append(f"offset=np.array({offset_str})")
+            parts.append(f"keep_endpoint={keep}")
+            call = f'{indent}set_randomization({", ".join(parts)})\n'
+        elif rtype == "cone":
+            call = (f'{indent}set_randomization("cone", '
+                    f'depth={config.get("depth", 0.2)}, '
+                    f'base_radius={config.get("base_radius", 0.05)}, '
+                    f'keep_endpoint={keep})\n')
+        else:
+            return code
+
+        if had_set_rand:
+            return code[:prev_line_start] + call + code[goto_line_start:]
+        else:
+            return code[:goto_line_start] + call + code[goto_line_start:]
 
     # ------------------------------------------------------------------
     # Live follow — arm tracks gizmo in real time
@@ -615,13 +781,41 @@ class WaypointEditor:
             elif wp.gripper_action == GripperAction.CLOSE:
                 lines.append(f"close_gripper_arm{arm}()")
 
+            has_rand = bool(wp.randomization)
+
+            if has_rand:
+                rtype = wp.randomization["type"]
+                if rtype == "sphere":
+                    parts = [f'"sphere"', f'radius={wp.randomization["radius"]}']
+                    offset = wp.randomization.get("offset")
+                    if offset is not None:
+                        offset_str = np.array2string(
+                            np.asarray(offset), separator=", ", precision=6,
+                        )
+                        parts.append(f"offset=np.array({offset_str})")
+                    parts.append("keep_endpoint=False")
+                    lines.append(f"set_randomization({', '.join(parts)})")
+                elif rtype == "cone":
+                    parts = [
+                        f'"cone"',
+                        f'depth={wp.randomization["depth"]}',
+                        f'base_radius={wp.randomization["base_radius"]}',
+                        "keep_endpoint=False",
+                    ]
+                    lines.append(f"set_randomization({', '.join(parts)})")
+
             z_arg = f", z_approach={wp.z_approach}" if wp.z_approach > 0 else ""
-            lines.append(
+            goto_line = (
                 f"goto_pose_arm{arm}("
                 f"np.array({pos_str}), "
                 f"np.array({quat_str})"
                 f"{z_arg})"
             )
+            lines.append(goto_line)
+
+            if has_rand:
+                lines.append(goto_line)
+
             lines.append("")
 
         return "\n".join(lines).rstrip() + "\n"

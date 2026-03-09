@@ -59,9 +59,10 @@ EXCLUDED_DUCT_POSITION = (ROW_CENTERS[0], DUCT_COLS[0])  # (-0.28, -0.325)
 
 # Random shift ranges for handover position (applied per trajectory)
 # x_shift, y_shift in meters; angle_shift in radians
-X_SHIFT_RANGE = (-0.01, 0.01)    # meters
-Y_SHIFT_RANGE = (-0.01, 0.01)    # meters
-ANGLE_SHIFT_RANGE = (-0.0, 0.05)  # radians (~±2.9°)
+# Centered around the known-good configuration: x=0.0, y=0.2, angle=0.5
+X_SHIFT_RANGE = (-0.01, 0.01)      # meters, centered at 0.0
+Y_SHIFT_RANGE = (0.19, 0.21)       # meters, centered at 0.2
+ANGLE_SHIFT_RANGE = (0.45, 0.55)   # radians, centered at 0.5 (~28.6°±2.9°)
 
 
 def get_dir_name(yellow_offset_str, duct_offset_str, x_shift=None, y_shift=None, angle_shift=None):
@@ -139,24 +140,46 @@ def run_single_combination(combo_idx, combinations):
     combo_id = combo["combo_id"]
 
     # Randomly sample handover position shifts from configured ranges
-    x_shift = random.uniform(*X_SHIFT_RANGE)
-    y_shift = random.uniform(*Y_SHIFT_RANGE)
-    angle_shift = random.uniform(*ANGLE_SHIFT_RANGE)
-
+    # x_shift = random.uniform(*X_SHIFT_RANGE)
+    # y_shift = random.uniform(*Y_SHIFT_RANGE)
+    # angle_shift = random.uniform(*ANGLE_SHIFT_RANGE)
+    x_shift = 0.0
+    y_shift = 0.2
+    angle_shift = 0.5
     print(f"Running combination {combo_idx + 1}/{len(combinations)}")
     print(f"  Yellow tape offset: [{yellow_offset}]")
     print(f"  Duct tape offset:   [{duct_offset}]")
     print(f"  Shifts: x_shift={x_shift:.4f}, y_shift={y_shift:.4f}, angle_shift={angle_shift:.4f} rad")
 
     # Run the simulation
+    run = wandb.run
+    run_name = None
+    if run is not None:
+        run_name = run.name or run.id
+        # Ensure name is safe as a single directory component
+        safe = str(run_name).replace("/", "_").replace("\\", "_")
+        if safe != run_name:
+            run.name = safe
+            run_name = safe
+            try:
+                run.save()
+            except Exception:
+                pass
+
+    dataset_dir = os.path.join("dataset", str(run_name)) if run_name else None
+
     cmd = [
-        "venv/bin/python", "test_scripts/test_handover_step.py",
+        "venv/bin/python", "test_scripts/handover_step.py",
         f"--yellow_offset={yellow_offset}",
         f"--duct_offset={duct_offset}",
         f"--x_shift={x_shift}",
         f"--y_shift={y_shift}",
         f"--angle_shift={angle_shift}",
+        "--perturb_radius=0.05",
+        "--joint_state_fps=500.0",
     ]
+    if dataset_dir is not None:
+        cmd.append(f"--dataset_dir={dataset_dir}")
 
     process = subprocess.run(cmd)
     exit_code = process.returncode
@@ -182,31 +205,42 @@ def run_single_combination(combo_idx, combinations):
         "x_shift": x_shift,
         "y_shift": y_shift,
         "angle_shift": angle_shift,
+        "combo_id": combo_id,
     }
 
-    # Path to the saved video (test_handover_step uses dir name that includes shifts)
-    combo_id_with_shifts = get_dir_name(yellow_offset, duct_offset, x_shift, y_shift, angle_shift)
-    dataset_dir = os.path.join("dataset", combo_id_with_shifts)
-    video_path = os.path.join(dataset_dir, "handover_agentview.mp4")
-    
-    # Extract last frame and video length if video exists
-    if os.path.exists(video_path):
+    if dataset_dir is not None:
+        log_data["dataset_dir"] = dataset_dir
+
+    def _log_video_and_last_frame(key_prefix: str, path: str):
+        if not os.path.exists(path):
+            return
         try:
-            reader = imageio.get_reader(video_path)
-            last_frame = None
-            num_frames = 0
-            for frame in reader:
-                last_frame = frame
-                num_frames += 1
-            reader.close()
-            
+            reader = imageio.get_reader(path)
+            try:
+                n = reader.count_frames()
+                last_frame = reader.get_data(n - 1) if n and n > 0 else None
+                num_frames = n
+            except Exception:
+                last_frame = None
+                num_frames = 0
+                for frame in reader:
+                    last_frame = frame
+                    num_frames += 1
+            finally:
+                reader.close()
+
+            if num_frames:
+                log_data[f"{key_prefix}_length_frames"] = int(num_frames)
             if last_frame is not None:
-                log_data["video_length_frames"] = num_frames
-                log_data["last_frame"] = wandb.Image(last_frame, caption=f"Last frame")
-            
-            log_data["video"] = wandb.Video(video_path, fps=20, format="mp4")
+                log_data[f"{key_prefix}_last_frame"] = wandb.Image(last_frame, caption=f"{key_prefix} last frame")
+            log_data[f"{key_prefix}_video"] = wandb.Video(path, fps=20, format="mp4")
         except Exception as e:
-            print(f"  ! Warning: Could not read video for wandb logging: {e}")
+            print(f"  ! Warning: Could not read {key_prefix} video for wandb logging: {e}")
+
+    if dataset_dir is not None:
+        _log_video_and_last_frame("agentview", os.path.join(dataset_dir, "handover_agentview.mp4"))
+        # _log_video_and_last_frame("robot0_wrist", os.path.join(dataset_dir, "handover_robot0_wrist.mp4"))
+        # _log_video_and_last_frame("robot1_wrist", os.path.join(dataset_dir, "handover_robot1_wrist.mp4"))
     
     return log_data
 
@@ -286,11 +320,11 @@ def main():
     parser.add_argument("--list-combinations", action="store_true",
                         help="List all valid combinations and exit")
     parser.add_argument("--x-shift-range", type=float, nargs=2, default=None,
-                        help="Min and max x_shift in meters (default: -0.02 0.02)")
+                        help="Min and max x_shift in meters (default: -0.01 0.01)")
     parser.add_argument("--y-shift-range", type=float, nargs=2, default=None,
-                        help="Min and max y_shift in meters (default: -0.02 0.02)")
+                        help="Min and max y_shift in meters (default: 0.19 0.21)")
     parser.add_argument("--angle-shift-range", type=float, nargs=2, default=None,
-                        help="Min and max angle_shift in radians (default: 0 0.1)")
+                        help="Min and max angle_shift in radians (default: 0.45 0.55)")
 
     args = parser.parse_args()
 

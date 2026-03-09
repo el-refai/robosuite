@@ -60,6 +60,9 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         self.cfg = None
         # For Arm 1 (robot1), use same robot model but different config
         self.cfg_1 = None
+        self._pending_randomization: dict | None = None
+        self._skip_next_hook = False
+        self._goto_counter = 0
 
     def functions(self) -> dict[str, Any]:
         fns = {
@@ -77,6 +80,7 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             "goto_home_joint_position_arm1": self.goto_home_joint_position_arm1,
             "get_arm_base_midpoint_z": self.get_arm_base_midpoint_z,
             "get_handover_params": self.get_handover_params,
+            "set_randomization": self.set_randomization,
         }
         return fns
 
@@ -89,6 +93,31 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         params = getattr(self._env, "handover_params", {})
         defaults = {"x_shift": 0.0, "y_shift": 0.0, "angle_shift": 0.0, "perturb_radius": 0.02}
         return {**defaults, **params}
+
+    def set_randomization(self, shape_type: str, **params) -> None:
+        """Declare a randomization shape for the NEXT goto_pose_arm* call.
+
+        Args:
+            shape_type: "sphere" or "cone"
+            **params: shape-specific parameters
+                sphere: radius (float, default 0.05),
+                        offset (ndarray (3,), default zeros) — displacement
+                        of the sphere center from the goto target in robot0 frame.
+                cone: depth (float, default 0.2), base_radius (float, default 0.05)
+                keep_endpoint (bool, default True): when True the randomized
+                    point is an intermediate waypoint before the original goto
+                    target; when False the randomized point replaces the target.
+        """
+        config = {"type": shape_type, **params}
+        config.setdefault("keep_endpoint", True)
+        if shape_type == "sphere":
+            config.setdefault("radius", 0.05)
+        elif shape_type == "cone":
+            config.setdefault("depth", 0.2)
+            config.setdefault("base_radius", 0.05)
+        else:
+            raise ValueError(f"Unknown randomization type: {shape_type!r}. Use 'sphere' or 'cone'.")
+        self._pending_randomization = config
 
     def get_arm_base_midpoint_z(self) -> float:
         """Z-coordinate of the midpoint between the two arm bases, in robot0's base frame.
@@ -224,10 +253,31 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
     ) -> np.ndarray:
         """Show the goto target in viser, optionally pause and allow the user to drag it.
 
+        If a pending randomization was set via set_randomization(), it is consumed
+        here: when paused the user can edit the shape params; a waypoint is sampled
+        and executed before the main goto proceeds.
+
         Returns the (possibly adjusted) target position in robot0 frame.
         """
+        if self._skip_next_hook:
+            self._skip_next_hook = False
+            return pos_robot0
+
+        rand_config = self._pending_randomization
+        self._pending_randomization = None
+
+        current_goto_idx = self._goto_counter
+        self._goto_counter += 1
+
         interaction = getattr(self._env, "viser_interaction", None)
         if interaction is None:
+            if rand_config is not None:
+                self._sample_and_execute_waypoint(label, pos_robot0, quat_wxyz, rand_config)
+                if not rand_config.get("keep_endpoint", True):
+                    arm_key = "arm0" if "arm0" in label else "arm1"
+                    cur, _ = (self.get_arm0_gripper_pose() if arm_key == "arm0"
+                              else self.get_arm1_gripper_pose())
+                    return cur
             return pos_robot0
 
         base0 = self._vtf.SE3(wxyz_xyz=self._env.base_link_wxyz_xyz_0)
@@ -237,10 +287,33 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         interaction.label = f"**{label}**  `{world_pos.round(3)}`"
         interaction.target_world_pos = world_pos.copy()
         interaction.target_world_wxyz = np.array(world_wxyz)
+        interaction.goto_index = current_goto_idx
+
+        if rand_config is not None:
+            arm_key = "arm0" if "arm0" in label else "arm1"
+            current_pos, _ = (self.get_arm0_gripper_pose() if arm_key == "arm0"
+                              else self.get_arm1_gripper_pose())
+            approach = pos_robot0 - current_pos
+            approach_norm = np.linalg.norm(approach)
+            axis_r0 = approach / approach_norm if approach_norm > 1e-6 else np.array([1.0, 0.0, 0.0])
+            axis_world = np.asarray(base0.rotation().as_matrix() @ axis_r0)
+            rand_config["_axis"] = axis_world
+            rand_config.setdefault("keep_endpoint", True)
+
+        if rand_config is not None:
+            interaction.randomization = rand_config
 
         if not interaction.step_mode:
             if hasattr(self._env, "_viser_push_interaction"):
                 self._env._viser_push_interaction()
+            if rand_config is not None:
+                self._sample_and_execute_waypoint(label, pos_robot0, quat_wxyz, rand_config)
+                interaction.randomization = None
+                if not rand_config.get("keep_endpoint", True):
+                    arm_key = "arm0" if "arm0" in label else "arm1"
+                    cur, _ = (self.get_arm0_gripper_pose() if arm_key == "arm0"
+                              else self.get_arm1_gripper_pose())
+                    return cur
             return pos_robot0
 
         interaction.paused = True
@@ -248,11 +321,29 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
         if hasattr(self._env, "_viser_push_interaction"):
             self._env._viser_push_interaction()
 
-        print(f"[viser] Paused at: {label}  world={world_pos.round(3)}")
+        rand_label = f" [{rand_config['type']}]" if rand_config else ""
+        print(f"[viser] Paused at: {label}{rand_label}  world={world_pos.round(3)}")
         interaction.resume_event.wait()
         print(f"[viser] Resumed.")
 
-        # Read back adjusted world position from the transform control
+        final_config = interaction.randomization
+        if final_config is not None:
+            if "_axis" not in final_config:
+                arm_key = "arm0" if "arm0" in label else "arm1"
+                cur, _ = (self.get_arm0_gripper_pose() if arm_key == "arm0"
+                          else self.get_arm1_gripper_pose())
+                approach = pos_robot0 - cur
+                a_norm = np.linalg.norm(approach)
+                axis_r0 = approach / a_norm if a_norm > 1e-6 else np.array([1.0, 0.0, 0.0])
+                final_config["_axis"] = np.asarray(base0.rotation().as_matrix() @ axis_r0)
+            self._sample_and_execute_waypoint(label, pos_robot0, quat_wxyz, final_config)
+            interaction.randomization = None
+            if not final_config.get("keep_endpoint", True):
+                arm_key = "arm0" if "arm0" in label else "arm1"
+                cur, _ = (self.get_arm0_gripper_pose() if arm_key == "arm0"
+                          else self.get_arm1_gripper_pose())
+                return cur
+
         ctrl = getattr(self._env, "_target_ctrl", None)
         if ctrl is not None:
             adjusted_world = np.array(ctrl.position)
@@ -260,6 +351,84 @@ class FrankaControlTapeHandoverPrivilegedApi(ApiBase):
             return np.asarray(adjusted_robot0, dtype=np.float64)
 
         return pos_robot0
+
+    def _sample_and_execute_waypoint(
+        self,
+        label: str,
+        target_pos_robot0: np.ndarray,
+        target_quat_wxyz: np.ndarray,
+        config: dict,
+    ) -> None:
+        """Sample a waypoint from the randomization shape and execute it via goto.
+
+        If the user dragged the randomization gizmo, ``_center_world`` is set
+        and the shape center is that world position (converted to robot0 frame).
+        Otherwise the shape is centred at ``target_pos_robot0``.
+
+        Sphere: lateral offset perpendicular to approach direction.
+        Cone: random point inside cone volume with apex at shape center,
+              axis toward the target.
+        """
+        arm_key = "arm0" if "arm0" in label else "arm1"
+        current_pos, _ = (self.get_arm0_gripper_pose() if arm_key == "arm0"
+                          else self.get_arm1_gripper_pose())
+
+        # Resolve shape center (user may have dragged the gizmo)
+        center_world = config.get("_center_world")
+        if center_world is not None:
+            base0 = self._vtf.SE3(wxyz_xyz=self._env.base_link_wxyz_xyz_0)
+            shape_center = np.asarray(
+                (base0.inverse() @ self._vtf.SE3.from_translation(center_world)).translation(),
+                dtype=np.float64,
+            )
+        else:
+            shape_center = target_pos_robot0.copy()
+            offset = config.get("offset")
+            if offset is not None:
+                shape_center = shape_center + np.asarray(offset, dtype=np.float64)
+
+        shape = config.get("type")
+
+        if shape == "sphere":
+            radius = config.get("radius", 0.05)
+            if radius <= 0:
+                return
+            approach = target_pos_robot0 - current_pos
+            approach_hat = approach / (np.linalg.norm(approach) + 1e-9)
+            up = np.array([0.0, 0.0, 1.0])
+            lateral = np.cross(approach_hat, up)
+            ln = np.linalg.norm(lateral)
+            lateral = lateral / ln if ln > 1e-6 else np.array([1.0, 0.0, 0.0])
+            vert = np.cross(lateral, approach_hat)
+            side = np.random.choice([-1.0, 1.0])
+            theta = np.random.uniform(-np.pi / 6, np.pi / 6)
+            direction = side * np.cos(theta) * lateral + np.sin(theta) * vert
+            direction = direction / (np.linalg.norm(direction) + 1e-9)
+            waypoint = shape_center + radius * direction
+
+        elif shape == "cone":
+            depth = config.get("depth", 0.2)
+            base_radius = config.get("base_radius", 0.05)
+            if depth <= 0 or base_radius <= 0:
+                return
+            approach = target_pos_robot0 - current_pos
+            axis = approach / (np.linalg.norm(approach) + 1e-9)
+            ref = np.array([0.0, 0.0, 1.0]) if abs(axis[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+            v1 = ref - np.dot(ref, axis) * axis
+            v1 = v1 / (np.linalg.norm(v1) + 1e-9)
+            v2 = np.cross(axis, v1)
+            d = depth * np.cbrt(np.random.uniform())
+            r_max = d * (base_radius / depth)
+            r = r_max * np.sqrt(np.random.uniform())
+            phi = np.random.uniform(0, 2 * np.pi)
+            waypoint = shape_center + d * axis + r * (np.cos(phi) * v1 + np.sin(phi) * v2)
+
+        else:
+            return
+
+        self._skip_next_hook = True
+        goto_fn = self.goto_pose_arm0 if arm_key == "arm0" else self.goto_pose_arm1
+        goto_fn(waypoint, target_quat_wxyz)
 
     def goto_pose_arm0(
         self, position: np.ndarray, quaternion_wxyz: np.ndarray, z_approach: float = 0.0
