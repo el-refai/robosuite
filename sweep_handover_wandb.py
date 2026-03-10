@@ -1,6 +1,5 @@
 import subprocess
 import os
-import random
 import wandb
 import imageio
 import sys
@@ -57,23 +56,25 @@ EXCLUDED_YELLOW_POSITION = (ROW_CENTERS[0], YELLOW_COLS[2])  # (-0.28, 0.325)
 # Duct at (-0.28, -0.325) - extreme corner  
 EXCLUDED_DUCT_POSITION = (ROW_CENTERS[0], DUCT_COLS[0])  # (-0.28, -0.325)
 
-# Random shift ranges for handover position (applied per trajectory)
-# x_shift, y_shift in meters; angle_shift in radians
-# Centered around the known-good configuration: x=0.0, y=0.2, angle=0.5
-X_SHIFT_RANGE = (-0.01, 0.01)      # meters, centered at 0.0
-Y_SHIFT_RANGE = (0.19, 0.21)       # meters, centered at 0.2
-ANGLE_SHIFT_RANGE = (0.45, 0.55)   # radians, centered at 0.5 (~28.6°±2.9°)
+def run_name_number_first(name):
+    """Convert wandb run name from 'legendary-sweep-64' to '64-legendary-sweep'."""
+    if not name:
+        return name
+    name = str(name).strip()
+    parts = name.split("-")
+    if not parts or not parts[-1].isdigit():
+        return name
+    num = parts[-1]
+    rest = "-".join(parts[:-1])
+    return f"{num}-{rest}"
 
 
-def get_dir_name(yellow_offset_str, duct_offset_str, x_shift=None, y_shift=None, angle_shift=None):
-    """Replicate the directory naming logic in test_handover_step.py.
-    When x_shift, y_shift, angle_shift are provided, appends _x_..._y_..._angle_... to match the test script."""
+def get_dir_name(yellow_offset_str, duct_offset_str):
+    """Replicate the directory naming logic for combo identification."""
     y_vals = [float(x.strip()) for x in yellow_offset_str.split(',')]
     d_vals = [float(x.strip()) for x in duct_offset_str.split(',')]
     
     base = f"handover_yellow_{y_vals[0]}_{y_vals[1]}_{y_vals[2]}_duct_{d_vals[0]}_{d_vals[1]}_{d_vals[2]}"
-    if x_shift is not None and y_shift is not None and angle_shift is not None:
-        base = f"{base}_x_{x_shift}_y_{y_shift}_angle_{angle_shift}"
     return base.replace(".", "_").replace("-", "neg")
 
 
@@ -132,24 +133,11 @@ def create_sweep_config(project_name):
     return sweep_config, combinations
 
 
-def run_single_combination(combo_idx, combinations):
-    """Run a single position combination with random x_shift, y_shift, angle_shift."""
+def run_single_combination(combo_idx, combinations, script_path):
+    """Run a single combination using the handover executor script."""
     combo = combinations[combo_idx]
-    yellow_offset = combo["yellow_offset"]
-    duct_offset = combo["duct_offset"]
     combo_id = combo["combo_id"]
-
-    # Randomly sample handover position shifts from configured ranges
-    # x_shift = random.uniform(*X_SHIFT_RANGE)
-    # y_shift = random.uniform(*Y_SHIFT_RANGE)
-    # angle_shift = random.uniform(*ANGLE_SHIFT_RANGE)
-    x_shift = 0.0
-    y_shift = 0.2
-    angle_shift = 0.5
-    print(f"Running combination {combo_idx + 1}/{len(combinations)}")
-    print(f"  Yellow tape offset: [{yellow_offset}]")
-    print(f"  Duct tape offset:   [{duct_offset}]")
-    print(f"  Shifts: x_shift={x_shift:.4f}, y_shift={y_shift:.4f}, angle_shift={angle_shift:.4f} rad")
+    print(f"Running combination {combo_idx + 1}/{len(combinations)}: {combo_id}")
 
     # Run the simulation
     run = wandb.run
@@ -165,19 +153,20 @@ def run_single_combination(combo_idx, combinations):
                 run.save()
             except Exception:
                 pass
+        # Use number-first format for dir: legendary-sweep-64 -> 64-legendary-sweep
+        run_name = run_name_number_first(run_name)
+        if run_name != (run.name or run.id):
+            run.name = run_name
+            try:
+                run.save()
+            except Exception:
+                pass
 
-    dataset_dir = os.path.join("dataset", str(run_name)) if run_name else None
+    timestamp = "dataset_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+    dataset_dir = os.path.join("dataset", timestamp, str(run_name)) if run_name else None
 
-    cmd = [
-        "venv/bin/python", "test_scripts/handover_step.py",
-        f"--yellow_offset={yellow_offset}",
-        f"--duct_offset={duct_offset}",
-        f"--x_shift={x_shift}",
-        f"--y_shift={y_shift}",
-        f"--angle_shift={angle_shift}",
-        "--perturb_radius=0.05",
-        "--joint_state_fps=500.0",
-    ]
+    script_path = os.path.abspath(script_path)
+    cmd = [sys.executable, script_path]
     if dataset_dir is not None:
         cmd.append(f"--dataset_dir={dataset_dir}")
 
@@ -196,15 +185,10 @@ def run_single_combination(combo_idx, combinations):
     log_data = {
         "exit_code": exit_code,
         "success": success,
-        "yellow_offset": yellow_offset,
-        "duct_offset": duct_offset,
         "yellow_x": combo["yellow_x"],
         "yellow_y": combo["yellow_y"],
         "duct_x": combo["duct_x"],
         "duct_y": combo["duct_y"],
-        "x_shift": x_shift,
-        "y_shift": y_shift,
-        "angle_shift": angle_shift,
         "combo_id": combo_id,
     }
 
@@ -245,7 +229,7 @@ def run_single_combination(combo_idx, combinations):
     return log_data
 
 
-def sweep_agent_fn():
+def sweep_agent_fn(script_path):
     """Function called by each wandb sweep agent."""
     # Generate combinations (same for all agents)
     combinations = generate_valid_combinations()
@@ -257,7 +241,7 @@ def sweep_agent_fn():
     combo_idx = wandb.config.combo_idx
     
     # Run the combination
-    log_data = run_single_combination(combo_idx, combinations)
+    log_data = run_single_combination(combo_idx, combinations, script_path)
     
     # Log results
     wandb.log(log_data)
@@ -284,24 +268,29 @@ def create_sweep(project_name):
     print(f"\nSweep created with ID: {sweep_id}")
     print(f"\nTo run agents in parallel, open multiple terminals and run:")
     print(f"  python sweep_handover_wandb.py --run-agent --sweep-id {sweep_id} --project {project_name}")
+    print(f"  (optional: add --script <path> to specify handover executor script)")
     print(f"\nOr run a single agent now with --count to limit runs:")
     print(f"  python sweep_handover_wandb.py --run-agent --sweep-id {sweep_id} --project {project_name} --count 10")
     
     return sweep_id
 
 
-def run_agent(sweep_id, project_name, count=None):
+def run_agent(sweep_id, project_name, script_path, count=None):
     """Run a wandb sweep agent."""
     print("==========================================")
     print("Starting WandB Sweep Agent")
     print("==========================================")
     print(f"Sweep ID: {sweep_id}")
     print(f"Project: {project_name}")
+    print(f"Script: {script_path}")
     if count:
         print(f"Max runs: {count}")
     print("==========================================")
     
-    wandb.agent(sweep_id, function=sweep_agent_fn, project=project_name, count=count)
+    def fn():
+        return sweep_agent_fn(script_path)
+    
+    wandb.agent(sweep_id, function=fn, project=project_name, count=count)
 
 
 def main():
@@ -319,23 +308,10 @@ def main():
                         help="Maximum number of runs for this agent")
     parser.add_argument("--list-combinations", action="store_true",
                         help="List all valid combinations and exit")
-    parser.add_argument("--x-shift-range", type=float, nargs=2, default=None,
-                        help="Min and max x_shift in meters (default: -0.01 0.01)")
-    parser.add_argument("--y-shift-range", type=float, nargs=2, default=None,
-                        help="Min and max y_shift in meters (default: 0.19 0.21)")
-    parser.add_argument("--angle-shift-range", type=float, nargs=2, default=None,
-                        help="Min and max angle_shift in radians (default: 0.45 0.55)")
+    parser.add_argument("--script", type=str, default="data_gen_scripts/handover_executor.py",
+                        help="Path to the handover executor script to run")
 
     args = parser.parse_args()
-
-    # Override shift ranges from CLI
-    global X_SHIFT_RANGE, Y_SHIFT_RANGE, ANGLE_SHIFT_RANGE
-    if args.x_shift_range is not None:
-        X_SHIFT_RANGE = tuple(args.x_shift_range)
-    if args.y_shift_range is not None:
-        Y_SHIFT_RANGE = tuple(args.y_shift_range)
-    if args.angle_shift_range is not None:
-        ANGLE_SHIFT_RANGE = tuple(args.angle_shift_range)
     
     # Generate project name with timestamp if not specified
     if args.project is None:
@@ -359,14 +335,14 @@ def main():
             print("Error: --sweep-id is required when running an agent")
             print("First create a sweep with --create-sweep, then use the returned sweep ID")
             sys.exit(1)
-        run_agent(args.sweep_id, args.project, args.count)
+        run_agent(args.sweep_id, args.project, args.script, args.count)
     else:
         # Default: create sweep and start one agent
         sweep_id = create_sweep(args.project)
         print("\n" + "=" * 42)
         print("Starting local agent...")
         print("=" * 42 + "\n")
-        run_agent(sweep_id, args.project, args.count)
+        run_agent(sweep_id, args.project, args.script, args.count)
 
 
 if __name__ == "__main__":
