@@ -495,7 +495,7 @@ class TwoArmHandover(TwoArmEnv):
                             self.sim.data.ctrl[self.robots[0]._ref_arm_joint_actuator_indexes] = torques
                         else:
                             robot_noops = [
-                                np.concatenate([robot.controller[arm].torque_compensation for arm in robot.arms])
+                                np.concatenate([robot.part_controllers[arm].torque_compensation for arm in robot.arms])
                                 for robot in self.robots
                             ]
 

@@ -126,3 +126,14 @@ MUJOCO_LOG.TXT
 
 # private demonstration files
 robosuite/models/assets/demonstrations_private
+
+# pyroki files
+pyroki/
+
+# output files
+outputs/
+dataset*/
+*.mp4
+
+# wandb files
+wandb/

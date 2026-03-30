@@ -1,0 +1,48 @@
+<mujoco model="duct_tape">
+  <default>
+    <default class="visual">
+      <!-- <geom group="2" type="mesh" density="50" contype="0" conaffinity="0"/> -->
+      <geom group="1" type="mesh" density="50" contype="0" conaffinity="0"/>
+    </default>
+    <default class="collision">
+      <!-- <geom group="3" type="mesh" density="50"/> -->
+      <geom group="0" type="mesh" density="50"/>
+    </default>
+  </default>
+  <asset>
+    <mesh file="duct_tape.obj" name="duct_tape" />
+    <mesh file="duct_tape_collision_0.obj" name="duct_tape_collision_0" />
+    <mesh file="duct_tape_collision_1.obj" name="duct_tape_collision_1" />
+    <mesh file="duct_tape_collision_2.obj" name="duct_tape_collision_2" />
+    <mesh file="duct_tape_collision_3.obj" name="duct_tape_collision_3" />
+    <mesh file="duct_tape_collision_4.obj" name="duct_tape_collision_4" />
+    <mesh file="duct_tape_collision_5.obj" name="duct_tape_collision_5" />
+    <mesh file="duct_tape_collision_6.obj" name="duct_tape_collision_6" />
+    <mesh file="duct_tape_collision_7.obj" name="duct_tape_collision_7" />
+    <mesh file="duct_tape_collision_8.obj" name="duct_tape_collision_8" />
+    <mesh file="duct_tape_collision_9.obj" name="duct_tape_collision_9" />
+    <mesh file="duct_tape_collision_10.obj" name="duct_tape_collision_10" />
+  </asset>
+  <worldbody>
+    <!-- <body name="duct_tape"> -->
+    <body>
+      <body name="object">
+      <geom mesh="duct_tape" class="visual" rgba="1 1 1 1"/>
+      <geom mesh="duct_tape_collision_0" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_1" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_2" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_3" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_4" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_5" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_6" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_7" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_8" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_9" rgba="0 0 0 0" class="collision"/>
+      <geom mesh="duct_tape_collision_10" rgba="0 0 0 0" class="collision"/>
+      </body>
+      <site name="bottom_site" pos="0.00013880431652069092 -0.00037794560194015503 -0.02554607018828392" size="0.002" rgba="0 0 0 0"/>
+      <site name="top_site" pos="0.00013880431652069092 -0.00037794560194015503 0.02525392919778824" size="0.002" rgba="0 0 0 0"/>
+      <site name="horizontal_radius_site" pos="0.065 0 0" size="0.002" rgba="0 0 0 0"/>
+    </body>
+  </worldbody>
+</mujoco>
